@@ -94,44 +94,75 @@ function askDelete(id, after) {
   dlg.showModal();
 }
 
-/* ---------------- 스와이프로 삭제 버튼 열기 ---------------- */
+/* ---------------- 스와이프로 삭제 버튼 열기 (iOS 기본 앱처럼) ---------------- */
 const SWIPE_W = 84;
 let sw = null, swipedAt = 0;
-function closeSwipes(except) {
-  document.querySelectorAll('.swipe.open').forEach(el => { if (el !== except) { el.classList.remove('open'); el.querySelector('.tx').style.transform = ''; } });
+function setX(row, x, animate) {
+  const tx = row.querySelector('.tx'), del = row.querySelector('.swipe-del');
+  tx.style.transition = del.style.transition = animate ? '' : 'none';
+  tx.style.transform = x ? `translate3d(${x}px,0,0)` : '';
+  const p = Math.min(1, -x / SWIPE_W);
+  del.style.opacity = p ? String(0.35 + 0.65 * p) : '';
 }
-document.addEventListener('pointerdown', e => {
-  const row = e.target.closest('.swipe');
-  if (!row) { closeSwipes(); return; }
-  if (e.target.closest('.swipe-del')) return;
-  sw = { row, tx: row.querySelector('.tx'), x: e.clientX, y: e.clientY, base: row.classList.contains('open') ? -SWIPE_W : 0, dx: 0, mode: '' };
-}, { passive: true });
-document.addEventListener('pointermove', e => {
+function closeSwipes(except) {
+  document.querySelectorAll('.swipe.open, .swipe.dragging').forEach(el => {
+    if (el !== except) { el.classList.remove('open', 'dragging'); setX(el, 0, true); }
+  });
+}
+function swipeStart(row, x, y, t) {
+  sw = { row, x, y, t, lastX: x, lastT: t, v: 0, base: row.classList.contains('open') ? -SWIPE_W : 0, cur: 0, mode: '' };
+}
+function swipeMove(x, y, t, ev) {
   if (!sw) return;
-  const dx = e.clientX - sw.x, dy = e.clientY - sw.y;
+  const dx = x - sw.x, dy = y - sw.y;
   if (!sw.mode) {
-    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-    sw.mode = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
-    if (sw.mode === 'h') { closeSwipes(sw.row); sw.tx.style.transition = 'none'; }
+    if (Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
+    sw.mode = Math.abs(dx) > Math.abs(dy) * 1.1 ? 'h' : 'v';
+    if (sw.mode === 'h') { closeSwipes(sw.row); sw.row.classList.add('dragging'); }
   }
   if (sw.mode !== 'h') return;
-  sw.dx = dx;
-  const x = Math.max(-SWIPE_W - 24, Math.min(0, sw.base + dx));
-  sw.tx.style.transform = `translateX(${x}px)`;
-}, { passive: true });
-function endSwipe() {
+  if (ev && ev.cancelable) ev.preventDefault(); // 가로로 미는 동안 세로 스크롤 멈춤
+  const dt = Math.max(1, t - sw.lastT);
+  sw.v = 0.8 * ((x - sw.lastX) / dt) + 0.2 * sw.v; sw.lastX = x; sw.lastT = t;
+  let pos = sw.base + dx;
+  if (pos > 0) pos = pos / 4;                                    // 오른쪽 끝 고무줄
+  if (pos < -SWIPE_W) pos = -SWIPE_W + (pos + SWIPE_W) / 3;      // 왼쪽 끝 고무줄
+  sw.cur = pos;
+  setX(sw.row, pos, false);
+}
+function swipeEnd() {
   if (!sw) return;
   if (sw.mode === 'h') {
-    const open = sw.base + sw.dx < -SWIPE_W / 2;
-    sw.tx.style.transition = '';
-    sw.tx.style.transform = open ? `translateX(${-SWIPE_W}px)` : '';
+    const moved = sw.cur - sw.base;
+    // 빠르게 튕기거나 20px 이상 밀면 그 방향으로 확정
+    const open = sw.v < -0.3 ? true : sw.v > 0.3 ? false : sw.base === 0 ? moved < -20 : moved < 20;
+    sw.row.classList.remove('dragging');
     sw.row.classList.toggle('open', open);
+    setX(sw.row, open ? -SWIPE_W : 0, true);
     swipedAt = Date.now();
   }
   sw = null;
 }
-document.addEventListener('pointerup', endSwipe);
-document.addEventListener('pointercancel', endSwipe);
+// 터치: iOS에서 가장 매끄러운 경로. 세로 스크롤과 충돌하지 않게 가로일 때만 preventDefault
+document.addEventListener('touchstart', e => {
+  const row = e.target.closest('.swipe');
+  if (!row) { closeSwipes(); return; }
+  if (e.target.closest('.swipe-del')) return;
+  const p = e.touches[0]; swipeStart(row, p.clientX, p.clientY, e.timeStamp);
+}, { passive: true });
+document.addEventListener('touchmove', e => { const p = e.touches[0]; swipeMove(p.clientX, p.clientY, e.timeStamp, e); }, { passive: false });
+document.addEventListener('touchend', swipeEnd);
+document.addEventListener('touchcancel', swipeEnd);
+// 마우스(맥 브라우저)
+document.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'touch') return;
+  const row = e.target.closest('.swipe');
+  if (!row) { closeSwipes(); return; }
+  if (e.target.closest('.swipe-del')) return;
+  swipeStart(row, e.clientX, e.clientY, e.timeStamp);
+});
+document.addEventListener('pointermove', e => { if (e.pointerType !== 'touch') swipeMove(e.clientX, e.clientY, e.timeStamp, null); });
+document.addEventListener('pointerup', e => { if (e.pointerType !== 'touch') swipeEnd(); });
 
 /* ---------------- 주기 ---------------- */
 function cycleRange(offset) {

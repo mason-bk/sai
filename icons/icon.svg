@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <rect width="512" height="512" fill="#264D3B"/>
-  <g fill="#F7F7F2" fill-rule="evenodd">
+  <rect width="512" height="512" fill="#2563EB"/>
+  <g fill="#FFFFFF" fill-rule="evenodd">
     <path d="M112 128H176Q212 128 240 152V384Q212 360 176 360H112Z M144 224V256H208V224Z"/>
     <path d="M272 152Q300 128 336 128H400V360H336Q300 360 272 384Z M304 224V256H368V224Z"/>
   </g>

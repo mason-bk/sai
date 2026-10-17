@@ -225,6 +225,20 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.55}
   .home-hero{background:var(--hero)}
   .home-hero .seg4 button[aria-pressed=true]{background:var(--accent);color:var(--on-accent)}
 }
+.swipe{position:relative;overflow:hidden;touch-action:pan-y;border-bottom:1px solid var(--line)}
+.card .swipe:last-child{border-bottom:0}
+.swipe .tx{position:relative;z-index:1;background:var(--surface);border-bottom:0;transition:transform .22s ease;will-change:transform;user-select:none;-webkit-user-select:none}
+.swipe-del{position:absolute;top:0;right:0;bottom:0;width:84px;border:0;background:var(--danger);color:#fff;font-weight:700;font-size:15px}
+.confirm{width:min(320px,calc(100% - 48px));max-width:320px;height:fit-content;max-height:80vh;margin:auto;inset:0;border-radius:20px;padding:0;background:var(--surface);color:var(--text)}
+.confirm::backdrop{background:var(--backdrop,rgba(0,0,0,.45))}
+.confirm-box{padding:22px 20px 18px;text-align:center}
+.confirm-box b{font-size:17px}
+.confirm-box p{margin:10px 0 18px;font-size:15px;line-height:1.5}
+.confirm-btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.confirm-btns .btn{min-height:48px}
+.btn-del{background:var(--danger);color:#fff}
+.toast.act{pointer-events:auto;display:flex;align-items:center;gap:14px;padding:8px 8px 8px 16px}
+.toast button{border:0;background:transparent;color:var(--bg);font-weight:800;min-height:36px;padding:0 10px;text-decoration:underline}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -232,6 +246,7 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.55}
 <div id="app"></div>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <dialog id="sheet" aria-labelledby="sheet-title"></dialog>
+<dialog id="confirm" class="confirm" aria-label="삭제 확인"></dialog>
 <script src="app.js"></script>
 </body>
 </html>

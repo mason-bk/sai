@@ -58,11 +58,80 @@ const parseDate = s => { const [y, m, d] = s.split('-').map(Number); return new 
 const WEEK = ['일', '월', '화', '수', '목', '금', '토'];
 
 let toastTimer;
-function toast(msg) {
+function toast(msg, action, onAction) {
   const t = $('#toast');
-  t.textContent = msg; t.classList.add('on');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), 2200);
+  t.textContent = msg;
+  t.classList.toggle('act', !!action);
+  if (action) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = action;
+    b.onclick = () => { t.classList.remove('on'); clearTimeout(toastTimer); onAction(); };
+    t.appendChild(b);
+  }
+  t.classList.add('on');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), action ? 5000 : 2200);
 }
+
+/* ---------------- 삭제: 확인 창 + 되돌리기 ---------------- */
+function askDelete(id, after) {
+  const t = S.txs[id]; if (!t) return;
+  const dlg = $('#confirm');
+  dlg.innerHTML = `<div class="confirm-box">
+    <b>이 기록을 삭제할까요?</b>
+    <p>${esc(t.merchant || t.category || '기록한 지출')} · ${won(t.amount)}원<br><span class="muted">${md(t.date)} · 두 사람 모두에게서 지워져요</span></p>
+    <div class="confirm-btns"><button type="button" value="cancel" class="btn ghost">취소</button><button type="button" value="ok" class="btn btn-del">삭제</button></div></div>`;
+  // 닫힘 이벤트 대신 버튼에서 바로 처리 (close 이벤트는 늦게 올 수 있음)
+  dlg.querySelector('[value=cancel]').onclick = () => { dlg.close(); closeSwipes(); };
+  dlg.querySelector('[value=ok]').onclick = () => {
+    dlg.close();
+    const before = Object.assign({}, S.txs[id]);
+    if (!upsert(Object.assign({}, before, { deleted: true }))) return;
+    if (after) after();
+    render();
+    toast('삭제했어요', '되돌리기', () => { if (upsert(Object.assign({}, S.txs[id], { deleted: false }))) { render(); toast('되돌렸어요'); } });
+  };
+  dlg.oncancel = () => closeSwipes();
+  dlg.showModal();
+}
+
+/* ---------------- 스와이프로 삭제 버튼 열기 ---------------- */
+const SWIPE_W = 84;
+let sw = null, swipedAt = 0;
+function closeSwipes(except) {
+  document.querySelectorAll('.swipe.open').forEach(el => { if (el !== except) { el.classList.remove('open'); el.querySelector('.tx').style.transform = ''; } });
+}
+document.addEventListener('pointerdown', e => {
+  const row = e.target.closest('.swipe');
+  if (!row) { closeSwipes(); return; }
+  if (e.target.closest('.swipe-del')) return;
+  sw = { row, tx: row.querySelector('.tx'), x: e.clientX, y: e.clientY, base: row.classList.contains('open') ? -SWIPE_W : 0, dx: 0, mode: '' };
+}, { passive: true });
+document.addEventListener('pointermove', e => {
+  if (!sw) return;
+  const dx = e.clientX - sw.x, dy = e.clientY - sw.y;
+  if (!sw.mode) {
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+    sw.mode = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+    if (sw.mode === 'h') { closeSwipes(sw.row); sw.tx.style.transition = 'none'; }
+  }
+  if (sw.mode !== 'h') return;
+  sw.dx = dx;
+  const x = Math.max(-SWIPE_W - 24, Math.min(0, sw.base + dx));
+  sw.tx.style.transform = `translateX(${x}px)`;
+}, { passive: true });
+function endSwipe() {
+  if (!sw) return;
+  if (sw.mode === 'h') {
+    const open = sw.base + sw.dx < -SWIPE_W / 2;
+    sw.tx.style.transition = '';
+    sw.tx.style.transform = open ? `translateX(${-SWIPE_W}px)` : '';
+    sw.row.classList.toggle('open', open);
+    swipedAt = Date.now();
+  }
+  sw = null;
+}
+document.addEventListener('pointerup', endSwipe);
+document.addEventListener('pointercancel', endSwipe);
 
 /* ---------------- 주기 ---------------- */
 function cycleRange(offset) {
@@ -520,12 +589,12 @@ function filterSheet(kind) {
 function txRow(t) {
   const cls = t.type === 'refund' ? 'ref' : t.type === 'transfer' ? 'ex' : '';
   const d = parseDate(t.date);
-  return `<button class="tx" data-act="edit" data-v="${esc(t.id)}">
+  return `<div class="swipe" data-id="${esc(t.id)}"><button class="swipe-del" data-act="askdel" data-v="${esc(t.id)}" tabindex="-1" aria-label="삭제">삭제</button><button class="tx" data-act="edit" data-v="${esc(t.id)}">
     <span class="ic" aria-hidden="true">${categoryIcon(t.category)}</span>
     <span class="mid"><span class="m">${esc(t.merchant || t.category || '기록한 지출')}</span>
       <span class="meta">${d.getMonth() + 1}.${d.getDate()} · ${esc(t.category || '미분류')} · ${esc(t.payer || '-')} 결제 · ${esc(t.beneficiary || '공동')}
       ${t.refund_pending ? '<span class="tag">환불 대기</span>' : ''}${t.type === 'transfer' ? '<span class="tag q">지출 제외</span>' : ''}${S.outbox[t.id] ? '<span class="tag q">공유 대기</span>' : ''}</span></span>
-    <span class="a num ${cls}">${t.type === 'refund' ? '<span class="refund-label">환불</span>−' : ''}${won(t.amount)}원</span></button>`;
+    <span class="a num ${cls}">${t.type === 'refund' ? '<span class="refund-label">환불</span>−' : ''}${won(t.amount)}원</span></button></div>`;
 }
 
 function listView() {
@@ -699,7 +768,13 @@ document.addEventListener('click', e => {
   switch (b.dataset.act) {
     case 'tab': tab = v; if (v === 'list' && filter.kind === 'refund_pending') filter.kind = 'all'; render(); scrollTo(0, 0); break;
     case 'add': openEntry(); break;
-    case 'edit': openEntry(v); break;
+    case 'edit': {
+      const row = b.closest('.swipe');
+      if (Date.now() - swipedAt < 350) break;
+      if (row && row.classList.contains('open')) { closeSwipes(); break; }
+      openEntry(v); break;
+    }
+    case 'askdel': askDelete(v); break;
     case 'close': stashDraft(); $('#sheet').close(); break;
     case 'cyc': offset = Math.min(0, offset + Number(v)); render(); break;
     case 'vmode': view.mode = v; hOff = 0; if (v === 'custom' && !view.from) { const r = cycleRange(0); view.from = r.start; view.to = today(); } saveView(); render(); break;
@@ -722,9 +797,7 @@ document.addEventListener('click', e => {
     case 'bene': draft.beneficiary = v; setPressed(b.parentElement, v); refreshSummary(); break;
     case 'type': draft.type = v; setPressed(b.parentElement, v); break;
     case 'delete':
-      if (confirm('이 기록을 삭제할까요?')) {
-        if (upsert(Object.assign({}, draft, { deleted: true }))) { saved = true; $('#sheet').close(); toast('삭제했어요'); render(); }
-      }
+      { const id = draft.id; askDelete(id, () => { saved = true; $('#sheet').close(); }); }
       break;
     case 'csv': exportCsv(); break;
     case 'disconnect':

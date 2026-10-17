@@ -118,8 +118,9 @@ async function sync() {
     if (!S.pendingSettings) S.settings = normSettings(res.settings);
     save();
   } catch (e) {
+    const why = e.code ? e.code + ' · ' + (e.message || '') : e.name === 'AbortError' ? '30초 응답 없음' : (e.name || '') + ' ' + (e.message || '');
     syncError = e.code === 'unauthorized' ? '설정 코드가 바뀌었어요. 설정 → 설정 코드 바꾸기'
-      : navigator.onLine === false ? '' : '공유 실패 · 기록은 이 기기에 안전해요';
+      : navigator.onLine === false ? '' : '공유 실패 (' + why.trim().slice(0, 120) + ') · 기록은 이 기기에 안전해요';
   } finally {
     syncing = false;
     render();
@@ -135,7 +136,9 @@ async function api(body) {
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify(Object.assign({ key: S.cfg.key }, body)),
     });
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch (err) { const e = new Error('HTTP ' + res.status + ' JSON 아님: ' + text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').slice(0, 80)); e.code = 'bad_response'; throw e; }
     if (!data.ok) { const e = new Error(data.error && data.error.message); e.code = data.error && data.error.code; throw e; }
     return data;
   } finally { clearTimeout(timer); }

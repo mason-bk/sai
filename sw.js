@@ -1,5 +1,5 @@
 // 앱 화면만 캐시한다. 거래 데이터는 기기 localStorage와 구글 시트에만 있다.
-const CACHE = 'sai-shell-v2';
+const CACHE = 'sai-shell-v3';
 const SHELL = ['./', 'index.html', 'app.js', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', e => {

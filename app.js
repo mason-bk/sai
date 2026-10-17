@@ -767,7 +767,7 @@ function txRow(t) {
     <span class="mid"><span class="m">${esc(t.merchant || t.category || '기록한 지출')}</span>
       <span class="meta">${d.getMonth() + 1}.${d.getDate()} · ${esc(t.category || '미분류')} · ${esc(t.payer || '공동')} 결제
       ${t.refund_pending ? '<span class="tag">환불 대기</span>' : ''}${t.type === 'transfer' ? '<span class="tag q">지출 제외</span>' : ''}${t.created_by === '정기' ? '<span class="tag q">정기</span>' : ''}${S.outbox[t.id] ? '<span class="tag q">공유 대기</span>' : ''}</span></span>
-    <span class="a num ${cls}">${t.type === 'refund' ? '<span class="refund-label">환불</span>−' : ''}${won(t.amount)}원</span></button></div>`;
+    <span class="a num ${cls}">${t.type === 'refund' ? '<span class="refund-label">환불</span>+' : ''}${won(t.amount)}원</span></button></div>`;
 }
 
 function listView() {
@@ -822,11 +822,11 @@ function calendar(r, txs) {
   for (let d = r.start; d <= r.end; d = addDays(d, 1)) {
     const dt = parseDate(d), n = net(d), has = !!byDay[d], future = d > td;
     if (!future) { if (n > 0) spendDays++; else if (!has) zeroDays++; }
-    const lvl = n > 0 ? Math.max(8, Math.round(n / max * 40)) : 0;
+    const lvl = n > 0 ? Math.max(6, Math.round(n / max * 28)) : 0;
     const label = (dt.getDate() === 1 || d === r.start ? (dt.getMonth() + 1) + '.' : '') + dt.getDate();
     cells.push(`<button class="cal-c${future ? ' fut' : ''}${d === td ? ' today' : ''}${d === calDay ? ' sel' : ''}${dt.getDay() === 0 ? ' sun' : ''}" data-act="calday" data-v="${d}" ${future ? 'disabled' : ''}
       style="${lvl ? `--lvl:${lvl}%` : ''}" aria-label="${dt.getMonth() + 1}월 ${dt.getDate()}일 ${has ? won(n) + '원' : future ? '' : '지출 없음'}">
-      <span class="cal-d">${label}</span>${has ? `<span class="cal-a num">${calAmt(n)}</span>` : !future ? '<span class="cal-z" aria-hidden="true"></span>' : ''}</button>`);
+      <span class="cal-d">${label}</span>${has ? (n ? `<span class="cal-a num${n < 0 ? ' in' : ''}">${n < 0 ? '+' + calAmt(-n) : calAmt(n)}</span>` : '') : !future ? '<span class="cal-z" aria-hidden="true"></span>' : ''}</button>`);
   }
   const sel = calDay && byDay[calDay] ? byDay[calDay].slice().sort(byNewest) : null;
   return `<div class="card cal" data-ui-key="calendar">

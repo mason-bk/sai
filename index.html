@@ -16,7 +16,7 @@
 <style>
 :root{
   --bg:#F5F6F8;--surface:#FFFFFF;--text:#20242B;--muted:#566171;--line:#DCE0E6;--control:#7A818C;
-  --accent:#2563EB;--action:#2563EB;--on-accent:#FFFFFF;--soft:#EDF0F4;--warm:#EDF0F4;--warm-text:#566171;--hero:#FFFFFF;--danger:#B42332;--prev:#7A7F87;
+  --accent:#2563EB;--action:#2563EB;--out:#C4534D;--in:#3A6BD4;--on-accent:#FFFFFF;--soft:#EDF0F4;--warm:#EDF0F4;--warm-text:#566171;--hero:#FFFFFF;--danger:#B42332;--prev:#7A7F87;
   --backdrop:rgba(20,23,28,.42);--shadow:rgba(20,23,28,.14);
   --danger-fill:#B42332;--on-danger:#FFFFFF;
   --r-card:20px;--r-ctl:14px;--r-item:12px;--r-sheet:24px;--r-pill:999px;
@@ -27,7 +27,7 @@
 }
 @media (prefers-color-scheme:dark){
   :root{--bg:#14171C;--surface:#20252D;--text:#F2F4F7;--muted:#AAB4C2;--line:#3D4653;--control:#7E8794;
-    --accent:#78A9FF;--action:#78A9FF;--on-accent:#14171C;--soft:#2A303A;--warm:#2A303A;--warm-text:#AAB4C2;--hero:#20252D;--danger:#FF929C;--prev:#7A8089;
+    --accent:#78A9FF;--action:#78A9FF;--out:#EE928C;--in:#8DB4FF;--on-accent:#14171C;--soft:#2A303A;--warm:#2A303A;--warm-text:#AAB4C2;--hero:#20252D;--danger:#FF929C;--prev:#7A8089;
     --danger-fill:#FF929C;--on-danger:#361016;--backdrop:rgba(0,0,0,.65);--shadow:rgba(0,0,0,.35);color-scheme:dark}
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -69,7 +69,8 @@ h2{font-size:18px;margin:var(--s-8) 0 10px;letter-spacing:-.025em}
 .tx .m{grid-column:2;grid-row:1;display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tx .meta{grid-column:2 / -1;grid-row:2;display:block;font-size:12px;color:var(--muted);margin-top:2px}
 .tx .a{grid-column:3;grid-row:1;font-size:16px;font-weight:700;white-space:nowrap;letter-spacing:-.02em}
-.tx .a.ref{color:var(--text)}
+.tx .a{color:var(--out)}
+.tx .a.ref{color:var(--in)}
 .refund-label{display:block;color:var(--muted);font-size:11px;font-weight:500;text-align:right;letter-spacing:0}
 .tx .a.ex{color:var(--muted);text-decoration:line-through}
 .tag{display:inline-block;font-size:11px;padding:1px var(--s-2);border-radius:var(--r-pill);background:var(--warm);color:var(--warm-text);margin-left:var(--s-1)}
@@ -118,11 +119,11 @@ nav.tabs .add-icon .icon{width:30px;height:30px;stroke-width:2.2}
 .budget .bar-row{padding:var(--s-2) 0 var(--s-3)}
 .budget-bar{position:relative;height:8px;overflow:visible}
 .budget-bar i{max-width:100%}
-.budget-bar.full i{background:var(--prev)}
+.budget-bar.full i{background:var(--out)}
 .budget-bar s{position:absolute;top:-3px;bottom:-3px;width:2px;margin-left:-1px;background:var(--text);opacity:.35;border-radius:1px}
 .budget-line{font-size:13px;color:var(--muted);margin-top:6px}
 .budget-line b{color:var(--text)}
-.budget-line .over{color:var(--text);font-weight:600}
+.budget-line .over{color:var(--out);font-weight:600}
 .budget-cta{display:flex;align-items:center;gap:var(--s-2);width:100%;margin-top:var(--s-3);padding:var(--s-3) var(--s-4);border:1px dashed var(--line);border-radius:var(--r-card);background:none;color:var(--action);font-size:14px;font-weight:600;text-align:left}
 .budget-cta .muted{display:block;font-weight:400;font-size:12px;color:var(--muted)}
 .budget-cat{display:flex;justify-content:space-between;align-items:center;gap:var(--s-3);min-height:52px;border-bottom:var(--stroke)}
@@ -141,13 +142,14 @@ nav.tabs .add-icon .icon{width:30px;height:30px;stroke-width:2.2}
 .cal-g{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
 .cal-w span{text-align:center;font-size:11px;color:var(--muted);padding-bottom:4px}
 .cal-c{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:2px;min-height:52px;padding:5px 1px;border:0;border-radius:var(--r-item);
-  background:color-mix(in srgb,var(--accent) var(--lvl,0%),var(--surface));color:var(--text);font:inherit}
+  background:color-mix(in srgb,var(--out) var(--lvl,0%),var(--surface));color:var(--text);font:inherit}
 .cal-c.pad{background:none}
 .cal-c.fut{opacity:.35}
 .cal-c.sun .cal-d{color:var(--danger)}
 .cal-c.today{box-shadow:inset 0 0 0 2px var(--accent)}
 .cal-c.sel{box-shadow:inset 0 0 0 2px var(--text)}
 .cal-d{font-size:12px;line-height:1.2}
+.cal-a.in{color:var(--in)}
 .cal-a{font-size:10.5px;font-weight:700;letter-spacing:-.03em;line-height:1.2;white-space:nowrap}
 .cal-z{display:inline-block;width:6px;height:6px;margin-top:6px;border-radius:50%;background:var(--accent);opacity:.45}
 .cal-legend{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin:var(--s-3) var(--s-1) 0}

@@ -316,12 +316,12 @@ function render() {
   const markup = !S.cfg ? setupView() : !S.me ? whoView() : `<div class="wrap">
     <header class="top"><div class="brand">${logo()}사이</div>
       <button class="who" data-act="tab" data-v="settings">${esc(S.me)}의 기록</button></header>
-    <main id="view">${tab === 'home' ? homeView() : tab === 'list' ? listView() : settingsView()}</main>
+    <main id="view">${tab === 'home' ? homeView() : tab === 'list' ? listView() : tab === 'recur' ? recurView() : settingsView()}</main>
   </div>
   <nav class="tabs" aria-label="메뉴">
     ${navBtn('home', '홈', 'home')}${navBtn('list', '내역', 'ledger')}
     <button class="plus" data-act="add" aria-label="지출 기록"><span class="add-icon">${icon('plus')}</span><span>기록</span></button>
-    ${navBtn('settings', '설정', 'settings')}
+    ${navBtn('recur', '정기', 'recurring')}${navBtn('settings', '설정', 'settings')}
   </nav>`;
   if (renderedScreen !== nextScreen) {
     app.innerHTML = markup;
@@ -375,7 +375,7 @@ const ICONS = {
 function icon(name) {
   return `<svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${ICONS[name] || ICONS.other}</svg>`;
 }
-const CATEGORY_ICONS = { '식비': 'food', '카페': 'cafe', '쿠팡': 'parcel', '쇼핑': 'shopping', '생활': 'living', '병원': 'health', '교통': 'transit', '차량유지': 'car', '경조사': 'gift', '고정지출': 'recurring', '기타': 'other', '미분류': 'uncategorized' };
+const CATEGORY_ICONS = { '식비': 'food', '카페': 'cafe', '쿠팡': 'parcel', '쇼핑': 'shopping', '생활': 'living', '병원': 'health', '교통': 'transit', '차량유지': 'car', '경조사': 'gift', '고정지출': 'recurring', '대출': 'recurring', '통신비': 'recurring', '보험': 'health', '구독': 'recurring', '기타': 'other', '미분류': 'uncategorized' };
 function categoryIcon(category) {
   const key = category || '미분류';
   return Object.prototype.hasOwnProperty.call(CATEGORY_ICONS, key) ? icon(CATEGORY_ICONS[key]) : esc(Array.from(key)[0]);
@@ -702,7 +702,7 @@ function txRow(t) {
     <span class="ic" aria-hidden="true">${categoryIcon(t.category)}</span>
     <span class="mid"><span class="m">${esc(t.merchant || t.category || '기록한 지출')}</span>
       <span class="meta">${d.getMonth() + 1}.${d.getDate()} · ${esc(t.category || '미분류')} · ${esc(t.payer || '-')} 결제 · ${esc(t.beneficiary || '공동')}
-      ${t.refund_pending ? '<span class="tag">환불 대기</span>' : ''}${t.type === 'transfer' ? '<span class="tag q">지출 제외</span>' : ''}${S.outbox[t.id] ? '<span class="tag q">공유 대기</span>' : ''}</span></span>
+      ${t.refund_pending ? '<span class="tag">환불 대기</span>' : ''}${t.type === 'transfer' ? '<span class="tag q">지출 제외</span>' : ''}${t.created_by === '정기' ? '<span class="tag q">정기</span>' : ''}${S.outbox[t.id] ? '<span class="tag q">공유 대기</span>' : ''}</span></span>
     <span class="a num ${cls}">${t.type === 'refund' ? '<span class="refund-label">환불</span>−' : ''}${won(t.amount)}원</span></button></div>`;
 }
 
@@ -778,6 +778,124 @@ function settingsView() {
     <p class="hint" style="text-align:center;margin-top:24px">사이 MVP · 기록 원본은 구글 시트에 있어요</p>`;
 }
 
+/* ---------------- 정기 지출 ---------------- */
+// 규칙은 공유 설정(recurring)에 저장하고, 기록은 서버가 동기화·매일 새벽에 만든다(같은 날짜는 한 번만).
+const rules = () => Array.isArray(S.settings.recurring) ? S.settings.recurring : null;
+const DAY_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
+const ruleWhen = r => r.freq === 'week' ? '매주 ' + DAY_NAMES[r.day] + '요일' : '매월 ' + (r.day >= 29 ? r.day + '일(없으면 말일)' : r.day + '일');
+function nextDate(r) {
+  const d = parseDate(r.start > today() ? r.start : today());
+  for (let i = 0; i < 400; i++, d.setDate(d.getDate() + 1)) {
+    const hit = r.freq === 'week' ? d.getDay() === r.day : d.getDate() === Math.min(r.day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate());
+    const s = ymd(d);
+    if (r.end && s > r.end) return '';
+    if (hit && !S.txs['rec-' + r.id + '-' + s.replace(/-/g, '')]) return s; // 이미 기록된 날은 건너뜀
+  }
+  return '';
+}
+function recurView() {
+  const list = rules();
+  if (!list) return `<h1>정기 지출</h1>
+    <div class="card"><div class="empty">서버 업데이트가 필요해요.<br>구글 시트의 Apps Script를 새 버전으로 바꾸면 쓸 수 있어요.</div></div>`;
+  const total = list.filter(r => r.active && r.freq === 'month').reduce((a, r) => a + r.amount, 0);
+  return `<h1>정기 지출</h1>
+    <p class="hint" style="font-size:14px;margin-top:0">대출·통신비·보험처럼 정해진 날 나가는 돈을 등록하면 그날 자동으로 기록돼요. 금액이 달라지면 그 기록만 고치면 돼요.</p>
+    ${list.length ? `<div class="card" data-ui-key="rules">${list.map(r => {
+      const nx = r.active ? nextDate(r) : '';
+      return `<div class="rule${r.active ? '' : ' off'}"><button class="tx" data-act="rule" data-v="${esc(r.id)}">
+        <span class="ic" aria-hidden="true">${categoryIcon(r.category)}</span>
+        <span class="mid"><span class="m">${esc(r.name)}</span>
+          <span class="meta">${ruleWhen(r)} · ${esc(r.category || '미분류')}${r.active ? (nx ? ' · 다음 ' + Number(nx.slice(5, 7)) + '.' + Number(nx.slice(8)) : ' · 종료') : ' · 멈춤'}</span></span>
+        <span class="a num">${won(r.amount)}원</span></button>
+        <label class="rule-sw"><input type="checkbox" data-act="rtoggle" data-v="${esc(r.id)}" ${r.active ? 'checked' : ''} aria-label="${esc(r.name)} 자동 기록"></label></div>`;
+    }).join('')}</div>
+    ${total ? `<p class="hint">매월 고정으로 나가는 돈 ${won(total)}원 (매주 항목 제외)</p>` : ''}` : `<div class="card"><div class="empty">등록한 정기 지출이 없어요.</div></div>`}
+    <div class="field"><button class="btn" data-act="rule">정기 지출 추가</button></div>`;
+}
+let ruleDraft = null;
+function openRule(id) {
+  const ex = id && (rules() || []).find(r => r.id === id);
+  ruleDraft = ex ? Object.assign({}, ex) : {
+    id: uid().replace(/[^A-Za-z0-9]/g, '').slice(0, 12), name: '', amount: 0, category: '', method: S.settings.methods[0] || '',
+    payer: S.me, beneficiary: defaultBene(), freq: 'month', day: new Date().getDate(), start: today(), end: '', active: true, isNew: true,
+  };
+  const dlg = $('#sheet');
+  dlg.classList.remove('filter-sheet');
+  dlg.innerHTML = ruleHtml();
+  dlg.showModal();
+}
+function ruleHtml() {
+  const d = ruleDraft, st = S.settings;
+  const methods = st.methods.includes(d.method) || !d.method ? st.methods : st.methods.concat(d.method);
+  const benes = st.beneficiaries.includes(d.beneficiary) ? st.beneficiaries : st.beneficiaries.concat(d.beneficiary);
+  const days = d.freq === 'week' ? DAY_NAMES.map((n, i) => [i, n + '요일']) : Array.from({ length: 31 }, (_, i) => [i + 1, (i + 1) + '일']);
+  return `<form data-form="rule" novalidate>
+    <div class="sheet-h"><button type="button" data-act="close">취소</button><b id="sheet-title" tabindex="-1" autofocus>${d.isNew ? '정기 지출 추가' : '정기 지출 수정'}</b><button type="submit" class="save">저장</button></div>
+    <div class="sheet-b">
+      <div class="field"><label for="r-name">이름</label><input id="r-name" name="name" class="in" autocomplete="off" placeholder="예: 핸드폰비, 주택담보대출, 실손보험" value="${esc(d.name)}"></div>
+      <div class="field"><label for="r-amount">금액</label>
+        <div class="amount-in"><input id="r-amount" name="amount" inputmode="numeric" autocomplete="off" placeholder="0" value="${d.amount ? won(d.amount) : ''}" class="num"><span>원</span></div>
+        <div class="err" id="rule-err"></div></div>
+      <div class="field"><label for="r-cat">분류</label><input id="r-cat" name="category" class="in" list="r-cats" autocomplete="off" placeholder="예: 대출, 통신비, 보험" value="${esc(d.category)}">
+        <datalist id="r-cats">${[...new Set(['대출', '통신비', '보험', '구독', ...st.categories])].map(c => `<option value="${esc(c)}">`).join('')}</datalist>
+        <p class="hint">새 분류를 적으면 분류 목록에도 추가돼요.</p></div>
+      <div class="field"><span class="lab">반복</span><div class="seg seg2">${[['month', '매월'], ['week', '매주']].map(([k, l]) => `<button type="button" data-act="rfreq" data-v="${k}" aria-pressed="${d.freq === k}">${l}</button>`).join('')}</div></div>
+      <div class="field"><label for="r-day">${d.freq === 'week' ? '요일' : '날짜'}</label><select id="r-day" name="day" class="in">${days.map(([v, l]) => `<option value="${v}" ${Number(d.day) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        ${d.freq === 'month' ? '<p class="hint">29~31일은 그날이 없는 달엔 말일에 기록돼요.</p>' : ''}</div>
+      <div class="field"><span class="lab">누구 몫</span><div class="chips">${benes.map(b => `<button type="button" class="chip" data-act="rbene" data-v="${esc(b)}" aria-pressed="${d.beneficiary === b}">${esc(b)}</button>`).join('')}</div></div>
+      <div class="row2">
+        <div class="field"><label for="r-payer">결제한 사람</label><select id="r-payer" name="payer" class="in">${USERS.map(u => `<option ${d.payer === u ? 'selected' : ''}>${u}</option>`).join('')}</select></div>
+        <div class="field"><label for="r-method">결제수단</label><select id="r-method" name="method" class="in">${methods.map(m => `<option ${d.method === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label for="r-start">시작일</label><input id="r-start" name="start" type="date" class="in" value="${esc(d.start)}"></div>
+        <div class="field"><label for="r-end">종료일 (선택)</label><input id="r-end" name="end" type="date" class="in" value="${esc(d.end)}"></div>
+      </div>
+      <p class="hint">시작일을 과거로 잡으면 그때부터 빠진 달도 한 번에 기록돼요. 대출 만기처럼 끝나는 날이 있으면 종료일을 넣어요.</p>
+      <div class="field"><button class="btn" type="submit">저장</button></div>
+      ${d.isNew ? '' : `<div class="field"><button type="button" class="btn danger" data-act="rdelete">이 정기 지출 삭제</button><p class="hint">이미 기록된 지출은 남아요.</p></div>`}
+    </div></form>`;
+}
+function putRules(list, extra) {
+  S.settings = Object.assign({}, S.settings, extra || {}, { recurring: list });
+  S.pendingSettings = Object.assign({}, S.pendingSettings, extra || {}, { recurring: list });
+  save(); render(); sync();
+}
+function readRule(f) {
+  const fd = new FormData(f), d = ruleDraft;
+  d.name = String(fd.get('name') || '').trim();
+  d.amount = Number(String(fd.get('amount') || '').replace(/[^\d]/g, ''));
+  d.category = String(fd.get('category') || '').trim();
+  d.day = Number(fd.get('day')); d.payer = fd.get('payer'); d.method = fd.get('method');
+  d.start = fd.get('start') || today(); d.end = fd.get('end') || '';
+}
+function saveRule(f) {
+  readRule(f);
+  const d = ruleDraft;
+  const err = m => { $('#rule-err').textContent = m; };
+  if (!d.name) return err('이름을 입력해 주세요');
+  if (!d.amount) return err('금액을 입력해 주세요');
+  if (d.end && d.end < d.start) return err('종료일이 시작일보다 빨라요');
+  const isNew = d.isNew; delete d.isNew;
+  const list = (rules() || []).filter(r => r.id !== d.id);
+  const old = (rules() || []).findIndex(r => r.id === d.id);
+  list.splice(old < 0 ? list.length : old, 0, d);
+  const extra = d.category && !S.settings.categories.includes(d.category) ? { categories: S.settings.categories.concat(d.category) } : null;
+  $('#sheet').close();
+  putRules(list, extra);
+  toast(isNew ? '정기 지출을 등록했어요' : '정기 지출을 고쳤어요');
+}
+function toggleRule(id) {
+  putRules((rules() || []).map(r => r.id === id ? Object.assign({}, r, { active: !r.active }) : r));
+}
+function deleteRule() {
+  if (!confirm('이 정기 지출을 삭제할까요? 이미 기록된 지출은 남아요.')) return;
+  const id = ruleDraft.id;
+  $('#sheet').close();
+  putRules((rules() || []).filter(r => r.id !== id));
+  toast('삭제했어요');
+}
+
 /* ---------------- 입력 시트 ---------------- */
 let draft = null, saved = false, editing = false;
 function merchantStats() {
@@ -791,6 +909,8 @@ function merchantStats() {
   });
   return m;
 }
+// 새 기록의 누구 몫은 항상 '공동'에서 시작 (거래처 기록이나 목록 순서를 따라가지 않음)
+const defaultBene = () => S.settings.beneficiaries.includes('공동') ? '공동' : S.settings.beneficiaries[0] || '공동';
 function openEntry(id) {
   const ex = id && S.txs[id];
   editing = !!ex;
@@ -798,7 +918,7 @@ function openEntry(id) {
   draft = ex ? Object.assign({}, ex) : {
     id: uid(), date: today(), merchant: '', amount: 0, type: 'expense',
     method: (last && last.method) || S.settings.methods[0] || '', category: '',
-    payer: S.me, beneficiary: S.settings.beneficiaries[0] || '공동', note: '', refund_pending: false,
+    payer: S.me, beneficiary: defaultBene(), note: '', refund_pending: false,
     created_by: S.me, created_at: Date.now(), updated_at: 0, deleted: false,
   };
   if (!ex && S.draft && S.draft.created_by === S.me) draft = Object.assign({}, S.draft, { id: uid(), created_at: Date.now() });
@@ -871,7 +991,6 @@ function suggestFor(merchant) {
   const t = s.last;
   if (t.category) { draft.category = t.category; setPressed($('#cats'), t.category); }
   if (t.method && S.settings.methods.includes(t.method)) { draft.method = t.method; $('#method').value = t.method; }
-  if (t.beneficiary) { draft.beneficiary = t.beneficiary; setPressed($('[data-act=bene]').parentElement, t.beneficiary); }
   refreshSummary();
 }
 
@@ -915,6 +1034,11 @@ document.addEventListener('click', e => {
       break;
     case 'csv': exportCsv(); break;
     case 'update': applyUpdate(); break;
+    case 'rule': openRule(v); break;
+    case 'rfreq': readRule($('[data-form=rule]')); ruleDraft.freq = v; ruleDraft.day = v === 'week' ? 1 : Math.min(28, new Date().getDate()); $('#sheet').innerHTML = ruleHtml(); break;
+    case 'rbene': ruleDraft.beneficiary = v; setPressed(b.parentElement, v); break;
+    case 'rtoggle': toggleRule(v); break;
+    case 'rdelete': deleteRule(); break;
     case 'disconnect':
       if (Object.keys(S.outbox).length) { toast('공유 대기 기록이 있어요. 먼저 동기화해 주세요'); break; }
       if (confirm('이 기기 연결을 해제할까요? 기록은 구글 시트에 남아 있어요.')) { localStorage.removeItem(STORE); S = blank(); render(); }
@@ -927,10 +1051,10 @@ document.addEventListener('input', e => {
   if (k === 'q') { filter.q = e.target.value; if (!e.isComposing) render(); }
   if (k === 'who') { filter.who = e.target.value; render(); }
   if (k === 'vfrom' || k === 'vto') { if (e.target.value) { view[k === 'vfrom' ? 'from' : 'to'] = e.target.value; saveView(); render(); } }
-  if (e.target.id === 'amount') {
+  if (e.target.id === 'amount' || e.target.id === 'r-amount') {
     const n = e.target.value.replace(/[^\d]/g, '').slice(0, 10);
     e.target.value = n ? won(Number(n)) : '';
-    $('#entry-err').textContent = '';
+    const err = $(e.target.id === 'amount' ? '#entry-err' : '#rule-err'); if (err) err.textContent = '';
   }
 });
 document.addEventListener('compositionend', e => { if (e.target.dataset.input === 'q') { filter.q = e.target.value; render(); } });
@@ -947,6 +1071,7 @@ document.addEventListener('submit', e => {
     if (draft.date > today()) { $('#entry-err').textContent = '미래 날짜는 기록할 수 없어요'; return; }
     if (upsert(draft)) { saved = true; S.draft = null; save(); $('#sheet').close(); toast('기록했어요'); render(); }
   }
+  if (kind === 'rule') { saveRule(f); return; }
   if (kind === 'setup') {
     let cfg;
     try {
@@ -977,7 +1102,7 @@ document.addEventListener('submit', e => {
   if (kind === 'settings') {
     const fd = new FormData(f);
     const list = k => String(fd.get(k) || '').split(/[,\n]/).map(s => s.trim()).filter(Boolean);
-    S.pendingSettings = { cycle_start_day: Number(fd.get('cycle_start_day')), categories: list('categories'), methods: list('methods'), beneficiaries: list('beneficiaries') };
+    S.pendingSettings = Object.assign({}, S.pendingSettings, { cycle_start_day: Number(fd.get('cycle_start_day')), categories: list('categories'), methods: list('methods'), beneficiaries: list('beneficiaries') });
     S.settings = Object.assign({}, S.settings, S.pendingSettings);
     save(); toast('설정을 저장했어요'); render(); sync();
   }

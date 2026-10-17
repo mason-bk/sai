@@ -476,12 +476,31 @@ document.addEventListener('submit', e => {
     if (upsert(draft)) { saved = true; S.draft = null; save(); $('#sheet').close(); toast('기록했어요'); render(); }
   }
   if (kind === 'setup') {
+    let cfg;
     try {
       const raw = $('#code').value.trim().replace(/\s/g, '');
-      const cfg = JSON.parse(atob(raw.replace(/-/g, '+').replace(/_/g, '/')));
-      if (!/^(https:\/\/script\.google\.com\/|http:\/\/localhost[:/])/.test(cfg.url) || !cfg.key) throw 0;
-      S.cfg = cfg; syncError = ''; save(); render(); sync(); toast('연결했어요');
-    } catch (err) { $('#setup-err').textContent = '설정 코드를 확인해 주세요'; }
+      cfg = JSON.parse(decodeURIComponent(escape(atob(raw.replace(/-/g, '+').replace(/_/g, '/')))));
+      if (!cfg.key) throw 0;
+    } catch (err) { $('#setup-err').textContent = '설정 코드를 확인해 주세요'; return; }
+    // 편집기에서 만든 코드는 주소가 테스트용(/dev)일 수 있다 → 배포 주소(/exec)를 따로 받는다
+    const execEl = $('#exec-url');
+    const execUrl = execEl ? execEl.value.trim() : '';
+    if (execUrl) {
+      if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(execUrl)) { $('#setup-err').textContent = '…/exec 로 끝나는 배포 주소를 넣어 주세요'; return; }
+      cfg.url = execUrl;
+    }
+    if (!/^(https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$|http:\/\/localhost[:/])/.test(cfg.url)) {
+      if (!execEl) {
+        f.insertAdjacentHTML('beforeend', `<div class="field" id="exec-box"><label for="exec-url">배포 주소 (…/exec)</label>
+          <input id="exec-url" class="in" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://script.google.com/macros/s/…/exec">
+          <p class="hint">설정 코드 속 주소가 배포 주소가 아니에요. Apps Script → 배포 → 배포 관리에서 웹 앱 URL을 복사해 넣고 다시 눌러 주세요.</p></div>`);
+        f.appendChild(f.querySelector('button[type=submit]'));
+      }
+      $('#setup-err').textContent = '배포 주소가 필요해요';
+      $('#exec-url').focus();
+      return;
+    }
+    S.cfg = cfg; syncError = ''; save(); render(); sync(); toast('연결했어요');
   }
   if (kind === 'settings') {
     const fd = new FormData(f);

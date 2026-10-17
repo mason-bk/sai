@@ -216,7 +216,9 @@ function whoView() {
 }
 
 /* ---------------- 홈: 분석 ---------------- */
-let view = Object.assign({ mode: 'cycle', from: '', to: '', cats: [], benes: [], payers: [] }, S.view || {});
+let view = Object.assign({ mode: 'month', from: '', to: '', cats: [], benes: [], payers: [] }, S.view || {});
+if (!['day', 'week', 'month', 'custom'].includes(view.mode)) view.mode = 'month'; // 예전 '주기' 보기 → 1개월
+let hOff = 0; // 홈 기간 이동(0 = 오늘/이번 주/이번 달)
 function saveView() { S.view = view; save(); }
 
 const addDays = (s, k) => { const d = parseDate(s); d.setDate(d.getDate() + k); return ymd(d); };
@@ -229,21 +231,39 @@ const man = n => {
     : a >= 1e4 ? (a / 1e4).toFixed(1).replace(/\.0$/, '') + '만' : won(a);
   return (n < 0 ? '−' : '') + s;
 };
-const MODES = [['cycle', '한 주기'], ['n3', '3주기'], ['n6', '6주기'], ['custom', '기간 지정']];
+const MODES = [['day', '1일'], ['week', '1주'], ['month', '1개월'], ['custom', '기간 지정']];
+const UNIT = { day: { name: '일', prev: '전날', trend: 14, trendName: '일별' }, week: { name: '주', prev: '지난주', trend: 8, trendName: '주별' }, month: { name: '달', prev: '지난달', trend: 6, trendName: '월별' } };
+
+/* 단위 기간: 1일, 1주(월~일), 1개월(카드 결제 주기) */
+function unitRange(unit, off) {
+  if (unit === 'day') { const d = addDays(today(), off); return { start: d, end: d }; }
+  if (unit === 'week') {
+    const now = parseDate(today()), mon = addDays(today(), -((now.getDay() + 6) % 7) + 7 * off);
+    return { start: mon, end: addDays(mon, 6) };
+  }
+  const c = cycleRange(off); return { start: c.start, end: c.end };
+}
+function unitLabel(unit, off, r) {
+  if (unit === 'day') {
+    const d = parseDate(r.start);
+    return { title: off === 0 ? '오늘' : off === -1 ? '어제' : (d.getMonth() + 1) + '월 ' + d.getDate() + '일', range: md(r.start) + ' (' + WEEK[d.getDay()] + ')' };
+  }
+  if (unit === 'week') return { title: off === 0 ? '이번 주' : off === -1 ? '지난주' : -off + '주 전', range: md(r.start) + ' - ' + md(r.end) };
+  return { title: off === 0 ? '이번 달' : off === -1 ? '지난달' : parseDate(r.start).getFullYear() + '년 ' + (parseDate(r.start).getMonth() + 1) + '월', range: md(r.start) + ' - ' + md(r.end) };
+}
 
 function periodRange() {
   if (view.mode === 'custom' && view.from && view.to) {
     const [a, b] = view.from <= view.to ? [view.from, view.to] : [view.to, view.from];
-    return { start: a, end: b, label: md(a) + ' - ' + md(b), custom: true, n: 0 };
+    return { start: a, end: b, title: '지정 기간', label: md(a) + ' - ' + md(b), custom: true };
   }
-  const n = view.mode === 'n3' ? 3 : view.mode === 'n6' ? 6 : 1;
-  const a = cycleRange(offset - (n - 1)), b = cycleRange(offset);
-  return { start: a.start, end: b.end, label: n === 1 ? b.label : md(a.start) + ' - ' + md(b.end), n, year: b.year };
+  const unit = view.mode === 'custom' ? 'month' : view.mode;
+  const r = unitRange(unit, hOff), l = unitLabel(unit, hOff, r);
+  return Object.assign(r, { unit, title: l.title, label: l.range });
 }
 function prevRange(r) {
   if (r.custom) { const len = dayDiff(r.start, r.end) + 1; const end = addDays(r.start, -1); return { start: addDays(end, -(len - 1)), end }; }
-  const a = cycleRange(offset - (2 * r.n - 1)), b = cycleRange(offset - r.n);
-  return { start: a.start, end: b.end };
+  return unitRange(r.unit, hOff - 1);
 }
 function cycleOffsetOf(date) {
   for (let k = 0; k > -120; k--) if (cycleRange(k).start <= date) return k;
@@ -273,17 +293,19 @@ function homeView() {
   const spanDays = dayDiff(r.start, r.end) + 1;
   const elapsed = running ? dayDiff(r.start, td) + 1 : spanDays;
   const avg = elapsed > 0 ? total / elapsed : 0;
-  const cmpName = r.custom ? '이전 같은 기간' : r.n === 1 ? '지난 주기' : `이전 ${r.n}주기`;
+  const cmpName = r.custom ? '이전 같은 기간'
+    : hOff === 0 ? { day: '어제', week: '지난주', month: '지난달' }[r.unit]
+    : { day: '그 전날', week: '그 전 주', month: '그 전 달' }[r.unit];
   const diff = total - prevTotal;
   const filtered = view.cats.length + view.benes.length + view.payers.length;
 
   let pace = '';
-  if (running && !r.custom && r.n === 1 && elapsed >= 3) {
+  if (running && r.unit === 'month' && elapsed >= 3) {
     const proj = Math.round(avg * spanDays);
     const prevSame = sum(prevTxs.filter(t => dayDiff(pr.start, t.date) < elapsed));
     const d2 = total - prevSame;
-    pace = `<div class="pace">이 속도면 주기 끝 <b class="num">약 ${man(proj)}원</b>` +
-      (prevTxs.length ? ` · 지난 주기 같은 날보다 <b class="num">${man(Math.abs(d2))}원 ${d2 >= 0 ? '더' : '덜'}</b>` : '') + `</div>`;
+    pace = `<div class="pace">이 속도면 이번 달 <b class="num">약 ${man(proj)}원</b>` +
+      (prevTxs.length ? ` · 지난달 같은 날보다 <b class="num">${man(Math.abs(d2))}원 ${d2 >= 0 ? '더' : '덜'}</b>` : '') + `</div>`;
   }
 
   const head = `
@@ -300,13 +322,13 @@ function homeView() {
   const hero = `
     <section class="hero" aria-label="기간 요약">
       <div class="cyc">
-        ${r.custom ? '<span style="width:44px"></span>' : `<button data-act="cyc" data-v="-1" aria-label="이전">‹</button>`}
-        <div class="lbl"><b>${r.custom ? '지정 기간' : offset === 0 ? (r.n === 1 ? '이번 주기' : '최근 ' + r.n + '주기') : (r.year || '') + '년'}</b>${r.label}</div>
-        ${r.custom ? '<span style="width:44px"></span>' : `<button data-act="cyc" data-v="1" aria-label="다음" ${offset >= 0 ? 'disabled style="opacity:.3"' : ''}>›</button>`}
+        ${r.custom ? '<span style="width:44px"></span>' : `<button data-act="hcyc" data-v="-1" aria-label="이전 ${UNIT[r.unit].name}">‹</button>`}
+        <div class="lbl"><b>${esc(r.title)}</b>${r.label}</div>
+        ${r.custom ? '<span style="width:44px"></span>' : `<button data-act="hcyc" data-v="1" aria-label="다음 ${UNIT[r.unit].name}" ${hOff >= 0 ? 'disabled style="opacity:.3"' : ''}>›</button>`}
       </div>
       <div class="hero-lab">${filtered ? '선택한 항목 지출' : '순지출'}</div>
       <div class="amt num">${won(total)}<small>원</small></div>
-      <div class="sub"><span>${txs.length}건 · 하루 평균 ${man(Math.round(avg))}원</span></div>
+      <div class="sub"><span>${txs.length}건${spanDays > 1 ? ` · 하루 평균 ${man(Math.round(avg))}원` : ''}</span></div>
       ${prevTxs.length || prevTotal ? `<div class="delta">${cmpName}보다 <b class="num">${won(Math.abs(diff))}원 ${diff >= 0 ? '더' : '덜'}</b> 썼어요${prevTotal > 0 ? ` (${diff >= 0 ? '▲' : '▼'}${Math.abs(Math.round(diff / prevTotal * 100))}%)` : ''}</div>` : `<div class="delta">${cmpName} 기록이 쌓이면 비교해 드려요</div>`}
       ${pace}
     </section>
@@ -323,7 +345,7 @@ function homeView() {
   const counts = {}; txs.forEach(t => { if (t.merchant) counts[t.merchant] = (counts[t.merchant] || 0) + 1; });
 
   return head + hero +
-    (!r.custom && r.n === 1 ? paceChart(r, pr, txs, prevTxs, running ? elapsed : spanDays) : '') +
+    (r.unit === 'month' ? paceChart(r, pr, txs, prevTxs, running ? elapsed : spanDays) : '') +
     trendChart(r) +
     `<h2>분류별 <span class="h2sub">눌러서 그 분류만 보기</span></h2>` + rankBars(cats, 'vcat', view.cats, 8) +
     (benes.length > 1 || view.benes.length ? `<h2>누구 몫</h2>` + rankBars(benes, 'vbene', view.benes) : '') +
@@ -376,9 +398,9 @@ function paceChart(r, pr, txs, prevTxs, upto) {
   const pts = Array.from({ length: D }, (_, i) => ({ x: x(i), label: `${i + 1}일째 (${md(addDays(r.start, i))})`, a: cur[i], b: prev[i] }));
   return `<h2>누적 지출 흐름</h2>
   <div class="card chart-card">
-    <div class="legend"><span><i class="key" style="background:var(--accent)"></i>이번 주기</span>${prev.length ? '<span><i class="key" style="background:var(--prev)"></i>지난 주기</span>' : ''}</div>
+    <div class="legend"><span><i class="key" style="background:var(--accent)"></i>${hOff === 0 ? '이번 달' : '선택한 달'}</span>${prev.length ? `<span><i class="key" style="background:var(--prev)"></i>${hOff === 0 ? '지난달' : '그 전달'}</span>` : ''}</div>
     <div class="chart" data-pts='${esc(JSON.stringify(pts))}' data-w="${W}">
-    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="이번 주기 누적 ${won(cur[last] || 0)}원${prev.length ? ', 지난 주기 최종 ' + won(prev[prev.length - 1]) + '원' : ''}">
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="이번 달 누적 ${won(cur[last] || 0)}원${prev.length ? ', 지난달 최종 ' + won(prev[prev.length - 1]) + '원' : ''}">
       ${ticks.map(v => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" class="grid"/><text x="${L - 6}" y="${y(v) + 4}" class="axis" text-anchor="end">${man(v)}</text>`).join('')}
       <text x="${L}" y="${H - 6}" class="axis">1일</text><text x="${W - R}" y="${H - 6}" class="axis" text-anchor="end">${D}일</text>
       ${prev.length ? `<path d="${path(prev)}" class="ln prev"/>` : ''}
@@ -386,44 +408,47 @@ function paceChart(r, pr, txs, prevTxs, upto) {
       <circle cx="${x(last)}" cy="${y(cur[last])}" r="4.5" class="dot"/>` : ''}
       <line class="xh" y1="${T}" y2="${H - B}" x1="-10" x2="-10"/>
     </svg><div class="tip" role="status"></div></div>
-    <p class="hint">주기 시작부터 같은 날짜끼리 비교해요. 그래프를 누르면 그날까지 누적 금액이 보여요.</p>
+    <p class="hint">달 시작(${md(r.start)})부터 같은 날짜끼리 비교해요. 누르면 그날까지 누적 금액이 보여요.</p>
   </div>`;
 }
 
 /* 주기별 지출 막대: 선택 기간에 걸친 주기는 진하게 */
 function trendChart(r) {
-  const endOff = r.custom ? cycleOffsetOf(r.end) : offset;
-  const n = Math.max(6, r.n || 0);
-  const cycles = Array.from({ length: n }, (_, i) => cycleRange(endOff - (n - 1) + i));
-  const vals = cycles.map(c => sum(pick(c)));
-  const sel = cycles.map(c => c.end >= r.start && c.start <= r.end);
+  const unit = r.custom ? 'month' : r.unit, u = UNIT[unit];
+  const endOff = r.custom ? cycleOffsetOf(r.end) : hOff;
+  const n = u.trend;
+  const periods = Array.from({ length: n }, (_, i) => { const off = endOff - (n - 1) + i, pr = unitRange(unit, off); return Object.assign(pr, unitLabel(unit, off, pr)); });
+  const vals = periods.map(p => sum(pick(p)));
+  const sel = periods.map(p => p.end >= r.start && p.start <= r.end);
   const W = 340, H = 160, L = 40, R = 8, T = 18, B = 24;
   const ymax = niceMax(Math.max(1, ...vals));
-  const band = (W - L - R) / n, bw = Math.min(24, band * 0.55);
+  const band = (W - L - R) / n, bw = Math.min(24, band * 0.6);
   const y = v => T + (1 - Math.max(0, v) / ymax) * (H - T - B);
   const td = today();
+  const every = n > 8 ? 2 : 1;
   const bars = vals.map((v, i) => {
     const cx = L + band * (i + .5), top = y(v), base = y(0), h = Math.max(0, base - top), rr = Math.min(4, h);
     const d = h <= 0 ? '' : `M${cx - bw / 2} ${base}V${top + rr}Q${cx - bw / 2} ${top} ${cx - bw / 2 + rr} ${top}H${cx + bw / 2 - rr}Q${cx + bw / 2} ${top} ${cx + bw / 2} ${top + rr}V${base}Z`;
-    const running = td >= cycles[i].start && td <= cycles[i].end;
+    const running = unit !== 'day' && td >= periods[i].start && td <= periods[i].end;
+    const showX = (n - 1 - i) % every === 0;
     return `<path d="${d}" class="col${sel[i] ? ' sel' : ''}${running ? ' run' : ''}"/>
-      <text x="${cx}" y="${H - 6}" class="axis" text-anchor="middle">${md(cycles[i].start)}</text>
-      ${sel[i] && n <= 6 ? `<text x="${cx}" y="${top - 5}" class="val" text-anchor="middle">${man(v)}</text>` : ''}`;
+      ${showX ? `<text x="${cx}" y="${H - 6}" class="axis" text-anchor="middle">${md(periods[i].start)}</text>` : ''}
+      ${sel[i] && h > 0 ? `<text x="${cx}" y="${top - 5}" class="val" text-anchor="middle">${man(v)}</text>` : ''}`;
   }).join('');
-  const pts = cycles.map((c, i) => ({ x: L + band * (i + .5), label: c.label + (td >= c.start && td <= c.end ? ' (진행 중)' : ''), a: vals[i] }));
-  const done = vals.filter((v, i) => cycles[i].end < td);
+  const pts = periods.map((p, i) => ({ x: L + band * (i + .5), label: p.title + ' ' + p.range + (unit !== 'day' && td >= p.start && td <= p.end ? ' (진행 중)' : ''), a: vals[i] }));
+  const done = vals.filter((v, i) => periods[i].end < td);
   const avg = done.length ? done.reduce((s, v) => s + v, 0) / done.length : 0;
-  return `<h2>주기별 지출</h2>
+  return `<h2>${u.trendName} 지출 <span class="h2sub">최근 ${n}${unit === 'month' ? '개월' : unit === 'week' ? '주' : '일'}</span></h2>
   <div class="card chart-card">
     <div class="chart" data-pts='${esc(JSON.stringify(pts))}' data-w="${W}" data-bar="1">
-    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="최근 ${n}개 주기 지출, 끝난 주기 평균 ${won(Math.round(avg))}원">
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="최근 ${n}${u.name} 지출, 평균 ${won(Math.round(avg))}원">
       <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
         <rect width="6" height="6" fill="var(--accent)" opacity=".45"/><line x1="0" y1="0" x2="0" y2="6" stroke="var(--accent)" stroke-width="3"/></pattern></defs>
       ${[0, ymax / 2, ymax].map(v => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" class="grid"/><text x="${L - 6}" y="${y(v) + 4}" class="axis" text-anchor="end">${man(v)}</text>`).join('')}
       ${bars}
     </svg><div class="tip" role="status"></div></div>
-    <p class="hint">${done.length ? `끝난 ${done.length}개 주기 평균 ${won(Math.round(avg))}원` : '끝난 주기가 아직 없어요'}${done.length < n ? ' · 진행 중인 주기는 빗금' : ''}</p>
-    <details class="tbl"><summary>숫자로 보기</summary><table>${cycles.map((c, i) => `<tr><td>${c.label}</td><td class="num">${won(vals[i])}원</td></tr>`).join('')}</table></details>
+    <p class="hint">${done.length ? `${u.name === '일' ? '하루' : '한 ' + u.name} 평균 ${won(Math.round(avg))}원 (지난 ${done.length}${unit === 'month' ? '개월' : u.name} 기준)` : '비교할 지난 기간이 아직 없어요'}${unit !== 'day' ? ' · 진행 중은 빗금' : ''}</p>
+    <details class="tbl"><summary>숫자로 보기</summary><table>${periods.map((p, i) => `<tr><td>${esc(p.title)} ${p.range}</td><td class="num">${won(vals[i])}원</td></tr>`).join('')}</table></details>
   </div>`;
 }
 
@@ -643,7 +668,8 @@ document.addEventListener('click', e => {
     case 'edit': openEntry(v); break;
     case 'close': stashDraft(); $('#sheet').close(); break;
     case 'cyc': offset = Math.min(0, offset + Number(v)); render(); break;
-    case 'vmode': view.mode = v; if (v === 'custom' && !view.from) { const r = cycleRange(offset); view.from = r.start; view.to = today() < r.end ? today() : r.end; } saveView(); render(); break;
+    case 'vmode': view.mode = v; hOff = 0; if (v === 'custom' && !view.from) { const r = cycleRange(0); view.from = r.start; view.to = today(); } saveView(); render(); break;
+    case 'hcyc': hOff = Math.min(0, hOff + Number(v)); render(); break;
     case 'vfilter': filterSheet(v); break;
     case 'vtoggle': b.setAttribute('aria-pressed', String(b.getAttribute('aria-pressed') !== 'true')); break;
     case 'vapply': view[v] = [...document.querySelectorAll('#vopts [aria-pressed=true]')].map(x => x.dataset.v); saveView(); $('#sheet').close(); render(); break;

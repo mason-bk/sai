@@ -418,7 +418,7 @@ function whoView() {
 }
 
 /* ---------------- 홈: 분석 ---------------- */
-let view = Object.assign({ mode: 'month', from: '', to: '', cats: [], benes: [], payers: [] }, S.view || {});
+let view = Object.assign({ mode: 'month', from: '', to: '', cats: [], benes: [], payers: [] }, S.view || {}, { benes: [] }); // 누구 몫은 v15에서 뺌
 if (!['day', 'week', 'month', 'custom'].includes(view.mode)) view.mode = 'month'; // 예전 '주기' 보기 → 1개월
 let hOff = 0; // 홈 기간 이동(0 = 오늘/이번 주/이번 달)
 function saveView() { S.view = view; save(); }
@@ -472,7 +472,6 @@ function cycleOffsetOf(date) {
   return -120;
 }
 const matches = t => (!view.cats.length || view.cats.includes(t.category || '미분류'))
-  && (!view.benes.length || view.benes.includes(t.beneficiary || '공동'))
   && (!view.payers.length || view.payers.includes(t.payer || '-'));
 const pick = r => liveTxs().filter(t => t.type !== 'transfer' && t.date >= r.start && t.date <= r.end && matches(t));
 const sum = txs => txs.reduce((s, t) => s + signed(t), 0);
@@ -499,7 +498,7 @@ function homeView() {
     : hOff === 0 ? { day: '어제', week: '지난주', month: '지난달' }[r.unit]
     : { day: '그 전날', week: '그 전 주', month: '그 전 달' }[r.unit];
   const diff = total - prevTotal;
-  const filtered = view.cats.length + view.benes.length + view.payers.length;
+  const filtered = view.cats.length + view.payers.length;
 
   let pace = '';
   if (running && r.unit === 'month' && elapsed >= 3 && total > 0) {
@@ -516,10 +515,10 @@ function homeView() {
       <label>시작일<input type="date" class="in" data-input="vfrom" value="${esc(view.from || r.start)}" max="${td}" aria-label="시작일"></label>
       <label>끝일<input type="date" class="in" data-input="vto" value="${esc(view.to || r.end)}" max="${td}" aria-label="끝일"></label></div>` : ''}
     <div class="filters" data-ui-key="filters" role="group" aria-label="지출 필터">
-      ${[['cats', '분류'], ['benes', '누구 몫'], ['payers', '결제자']].map(([k, l]) => `<button class="chip" data-act="vfilter" data-v="${k}" aria-pressed="${view[k].length > 0}"><span>${l}${view[k].length ? ' ' + view[k].length : ''}</span>${icon('down')}</button>`).join('')}
+      ${[['cats', '분류'], ['payers', '결제자']].map(([k, l]) => `<button class="chip" data-act="vfilter" data-v="${k}" aria-pressed="${view[k].length > 0}"><span>${l}${view[k].length ? ' ' + view[k].length : ''}</span>${icon('down')}</button>`).join('')}
       ${filtered ? '<button class="link" data-act="vclear">초기화</button>' : ''}
     </div>
-    ${filtered ? `<p class="hint filter-summary" data-ui-key="filter-summary">${esc([...view.cats, ...view.benes, ...view.payers.map(p => p + ' 결제')].join(' · '))}만 보는 중</p>` : ''}
+    ${filtered ? `<p class="hint filter-summary" data-ui-key="filter-summary">${esc([...view.cats, ...view.payers.map(p => p + ' 결제')].join(' · '))}만 보는 중</p>` : ''}
     <p class="status" id="status" role="status"></p>`;
 
   const hero = `
@@ -540,7 +539,6 @@ function homeView() {
   }
 
   const cats = groupSum(txs, t => t.category || '미분류');
-  const benes = groupSum(txs, t => t.beneficiary || '공동');
   const payers = groupSum(txs, t => t.payer || '-');
   const merch = groupSum(txs.filter(t => t.merchant), t => t.merchant).slice(0, 5);
   const counts = {}; txs.forEach(t => { if (t.merchant) counts[t.merchant] = (counts[t.merchant] || 0) + 1; });
@@ -549,7 +547,6 @@ function homeView() {
     (r.unit === 'month' ? paceChart(r, pr, txs, prevTxs, running ? elapsed : spanDays) : '') +
     trendChart(r) +
     `<h2 data-ui-key="cats-title">분류별 <span class="h2sub">눌러서 그 분류만 보기</span></h2>` + rankBars(cats, 'vcat', view.cats, 8) +
-    (benes.length > 1 || view.benes.length ? `<h2 data-ui-key="benes-title">누구 몫</h2>` + rankBars(benes, 'vbene', view.benes) : '') +
     (payers.length > 1 || view.payers.length ? `<h2 data-ui-key="payers-title">결제자</h2>` + rankBars(payers, 'vpayer', view.payers) : '') +
     (merch.length ? `<h2 data-ui-key="merchants-title">많이 쓴 곳</h2><div class="card" data-ui-key="merchants">${merch.map(([m, v], i) => `
       <div class="bar-row"><div class="bar-top"><span>${i + 1}. ${esc(m)} <span class="muted">${counts[m]}건</span></span><b class="num">${won(v)}원</b></div></div>`).join('')}</div>` : '');
@@ -701,7 +698,7 @@ function txRow(t) {
   return `<div class="swipe" data-id="${esc(t.id)}"><button class="swipe-del" data-act="askdel" data-v="${esc(t.id)}" tabindex="-1" aria-label="삭제">삭제</button><button class="tx" data-act="edit" data-v="${esc(t.id)}">
     <span class="ic" aria-hidden="true">${categoryIcon(t.category)}</span>
     <span class="mid"><span class="m">${esc(t.merchant || t.category || '기록한 지출')}</span>
-      <span class="meta">${d.getMonth() + 1}.${d.getDate()} · ${esc(t.category || '미분류')} · ${esc(t.payer || '-')} 결제 · ${esc(t.beneficiary || '공동')}
+      <span class="meta">${d.getMonth() + 1}.${d.getDate()} · ${esc(t.category || '미분류')} · ${esc(t.payer || '-')} 결제
       ${t.refund_pending ? '<span class="tag">환불 대기</span>' : ''}${t.type === 'transfer' ? '<span class="tag q">지출 제외</span>' : ''}${t.created_by === '정기' ? '<span class="tag q">정기</span>' : ''}${S.outbox[t.id] ? '<span class="tag q">공유 대기</span>' : ''}</span></span>
     <span class="a num ${cls}">${t.type === 'refund' ? '<span class="refund-label">환불</span>−' : ''}${won(t.amount)}원</span></button></div>`;
 }
@@ -712,7 +709,7 @@ function listView() {
   let txs = liveTxs().filter(t => filter.kind === 'refund_pending' ? t.refund_pending : inRange(t, r));
   if (filter.kind === 'transfer') txs = txs.filter(t => t.type === 'transfer');
   if (filter.kind === 'refund') txs = txs.filter(t => t.type === 'refund');
-  if (filter.who) txs = txs.filter(t => (t.beneficiary || '공동') === filter.who);
+  if (filter.who) txs = txs.filter(t => t.payer === filter.who);
   if (q) txs = txs.filter(t => [t.merchant, t.note, t.category, t.method].join(' ').toLowerCase().includes(q));
   txs.sort(byNewest);
   const net = txs.reduce((s, t) => s + signed(t), 0);
@@ -737,8 +734,8 @@ function listView() {
       <button data-act="cyc" data-v="1" aria-label="다음 주기" ${offset >= 0 ? 'disabled' : ''}>${icon('right')}</button></div></div>`}
     <input class="in search" type="search" placeholder="거래처, 메모 검색" value="${esc(filter.q)}" data-input="q" aria-label="검색">
     <div class="chips" data-ui-key="list-kinds" style="margin-top:10px">${kinds.map(([k, l]) => `<button class="chip" data-act="kind" data-v="${k}" aria-pressed="${filter.kind === k}">${l}</button>`).join('')}</div>
-    <div class="field"><select class="in" data-input="who" aria-label="대상">
-      <option value="">모든 대상</option>${S.settings.beneficiaries.map(b => `<option ${filter.who === b ? 'selected' : ''}>${esc(b)}</option>`).join('')}</select></div>
+    <div class="field"><select class="in" data-input="who" aria-label="결제자">
+      <option value="">모든 결제자</option>${USERS.map(b => `<option ${filter.who === b ? 'selected' : ''}>${esc(b)}</option>`).join('')}</select></div>
     <p class="status" id="status"></p>
     <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--muted);margin-top:8px"><span>${txs.length}건</span><span class="num">순지출 ${won(net)}원</span></div>
     ${rows || `<div class="empty">${q || filter.kind !== 'all' || filter.who ? '조건에 맞는 기록이 없어요.' : '이 기간의 기록이 없어요.'}</div>`}`;
@@ -757,7 +754,7 @@ function settingsView() {
         <p class="hint">29~31일을 고르면 그날이 없는 달은 말일부터 시작해요.</p></div>
       <div class="field"><label for="cats">분류 (쉼표로 구분)</label><textarea id="cats" class="in" rows="3" name="categories">${esc(st.categories.join(', '))}</textarea></div>
       <div class="field"><label for="mts">결제수단</label><textarea id="mts" class="in" rows="2" name="methods">${esc(st.methods.join(', '))}</textarea></div>
-      <div class="field"><label for="bns">누구 몫</label><textarea id="bns" class="in" rows="2" name="beneficiaries">${esc(st.beneficiaries.join(', '))}</textarea>
+      <div class="field">
         <p class="hint">설정은 두 사람에게 같이 적용돼요.</p></div>
       <div class="field"><button class="btn" type="submit">설정 저장</button></div>
     </form>
@@ -827,7 +824,6 @@ function openRule(id) {
 function ruleHtml() {
   const d = ruleDraft, st = S.settings;
   const methods = st.methods.includes(d.method) || !d.method ? st.methods : st.methods.concat(d.method);
-  const benes = st.beneficiaries.includes(d.beneficiary) ? st.beneficiaries : st.beneficiaries.concat(d.beneficiary);
   const days = d.freq === 'week' ? DAY_NAMES.map((n, i) => [i, n + '요일']) : Array.from({ length: 31 }, (_, i) => [i + 1, (i + 1) + '일']);
   return `<form data-form="rule" novalidate>
     <div class="sheet-h"><button type="button" data-act="close">취소</button><b id="sheet-title" tabindex="-1" autofocus>${d.isNew ? '정기 지출 추가' : '정기 지출 수정'}</b><button type="submit" class="save">저장</button></div>
@@ -842,9 +838,8 @@ function ruleHtml() {
       <div class="field"><span class="lab">반복</span><div class="seg seg2">${[['month', '매월'], ['week', '매주']].map(([k, l]) => `<button type="button" data-act="rfreq" data-v="${k}" aria-pressed="${d.freq === k}">${l}</button>`).join('')}</div></div>
       <div class="field"><label for="r-day">${d.freq === 'week' ? '요일' : '날짜'}</label><select id="r-day" name="day" class="in">${days.map(([v, l]) => `<option value="${v}" ${Number(d.day) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
         ${d.freq === 'month' ? '<p class="hint">29~31일은 그날이 없는 달엔 말일에 기록돼요.</p>' : ''}</div>
-      <div class="field"><span class="lab">누구 몫</span><div class="chips">${benes.map(b => `<button type="button" class="chip" data-act="rbene" data-v="${esc(b)}" aria-pressed="${d.beneficiary === b}">${esc(b)}</button>`).join('')}</div></div>
       <div class="row2">
-        <div class="field"><label for="r-payer">결제한 사람</label><select id="r-payer" name="payer" class="in">${USERS.map(u => `<option ${d.payer === u ? 'selected' : ''}>${u}</option>`).join('')}</select></div>
+        <div class="field"><label for="r-payer">결제자</label><select id="r-payer" name="payer" class="in">${USERS.map(u => `<option ${d.payer === u ? 'selected' : ''}>${u}</option>`).join('')}</select></div>
         <div class="field"><label for="r-method">결제수단</label><select id="r-method" name="method" class="in">${methods.map(m => `<option ${d.method === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
       </div>
       <div class="row2">
@@ -909,7 +904,7 @@ function merchantStats() {
   });
   return m;
 }
-// 새 기록의 누구 몫은 항상 '공동'에서 시작 (거래처 기록이나 목록 순서를 따라가지 않음)
+// 누구 몫은 화면에서 뺐고(v15) 데이터에는 '공동'으로 남긴다
 const defaultBene = () => S.settings.beneficiaries.includes('공동') ? '공동' : S.settings.beneficiaries[0] || '공동';
 function openEntry(id) {
   const ex = id && S.txs[id];
@@ -937,7 +932,6 @@ function entryHtml(isEdit) {
   const top = Object.entries(stats).sort((a, b) => b[1].n - a[1].n).slice(0, 8).map(([k]) => k);
   const cats = st.categories.includes(d.category) || !d.category ? st.categories : st.categories.concat(d.category);
   const methods = st.methods.includes(d.method) || !d.method ? st.methods : st.methods.concat(d.method);
-  const benes = st.beneficiaries.includes(d.beneficiary) ? st.beneficiaries : st.beneficiaries.concat(d.beneficiary);
   return `<form data-form="entry" novalidate>
     <div class="sheet-h"><button type="button" data-act="close">취소</button><b id="sheet-title" tabindex="-1" autofocus>${isEdit ? '기록 수정' : '지출 기록'}</b><button type="submit" class="save">저장</button></div>
     <div class="sheet-b">
@@ -950,11 +944,10 @@ function entryHtml(isEdit) {
         ${top.length ? `<div class="chips" style="margin-top:8px">${top.map(m => `<button type="button" class="chip" data-act="merchant" data-v="${esc(m)}">${esc(m)}</button>`).join('')}</div>` : ''}</div>
       <div class="field"><span class="lab">분류</span><div class="chips" id="cats">${cats.map(c => `<button type="button" class="chip" data-act="cat" data-v="${esc(c)}" aria-pressed="${d.category === c}">${esc(c)}</button>`).join('')}</div></div>
       <details class="more" ${isEdit || d.type !== 'expense' || d.refund_pending || d.note ? 'open' : ''}>
-      <summary>날짜·누구 몫·결제수단 <span class="sum">${esc(summaryLine())}</span></summary>
-      <div class="field"><span class="lab">누구 몫</span><div class="chips">${benes.map(b => `<button type="button" class="chip" data-act="bene" data-v="${esc(b)}" aria-pressed="${d.beneficiary === b}">${esc(b)}</button>`).join('')}</div></div>
+      <summary>날짜·결제자·결제수단 <span class="sum">${esc(summaryLine())}</span></summary>
       <div class="row2">
         <div class="field"><label for="date">날짜</label><input id="date" name="date" type="date" class="in" value="${esc(d.date)}" max="${today()}"></div>
-        <div class="field"><label for="payer">결제한 사람</label><select id="payer" name="payer" class="in">${USERS.map(u => `<option ${d.payer === u ? 'selected' : ''}>${u}</option>`).join('')}</select></div>
+        <div class="field"><label for="payer">결제자</label><select id="payer" name="payer" class="in">${USERS.map(u => `<option ${d.payer === u ? 'selected' : ''}>${u}</option>`).join('')}</select></div>
       </div>
       <div class="field"><label for="method">결제수단</label><select id="method" name="method" class="in">${methods.map(m => `<option ${d.method === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
       <div class="field"><span class="lab">종류</span><div class="seg">${Object.entries(TYPE_LABEL).map(([k, l]) => `<button type="button" data-act="type" data-v="${k}" aria-pressed="${d.type === k}">${l}</button>`).join('')}</div>
@@ -969,7 +962,7 @@ function entryHtml(isEdit) {
 }
 function summaryLine() {
   const d = draft;
-  return [d.date === today() ? '오늘' : d.date.slice(5).replace('-', '.'), d.beneficiary, d.method, d.payer + ' 결제'].filter(Boolean).join(' · ');
+  return [d.date === today() ? '오늘' : d.date.slice(5).replace('-', '.'), d.payer + ' 결제', d.method].filter(Boolean).join(' · ');
 }
 function refreshSummary() { const el = $('.more .sum'); if (el) el.textContent = summaryLine(); }
 function readEntry(form) {
@@ -1027,7 +1020,6 @@ document.addEventListener('click', e => {
     case 'sync': sync(); break;
     case 'merchant': $('#merchant').value = v; draft.merchant = v; suggestFor(v); break;
     case 'cat': draft.category = draft.category === v ? '' : v; setPressed(b.parentElement, draft.category); break;
-    case 'bene': draft.beneficiary = v; setPressed(b.parentElement, v); refreshSummary(); break;
     case 'type': draft.type = v; setPressed(b.parentElement, v); break;
     case 'delete':
       { const id = draft.id; askDelete(id, () => { saved = true; $('#sheet').close(); }); }
@@ -1036,7 +1028,6 @@ document.addEventListener('click', e => {
     case 'update': applyUpdate(); break;
     case 'rule': openRule(v); break;
     case 'rfreq': readRule($('[data-form=rule]')); ruleDraft.freq = v; ruleDraft.day = v === 'week' ? 1 : Math.min(28, new Date().getDate()); $('#sheet').innerHTML = ruleHtml(); break;
-    case 'rbene': ruleDraft.beneficiary = v; setPressed(b.parentElement, v); break;
     case 'rtoggle': toggleRule(v); break;
     case 'rdelete': deleteRule(); break;
     case 'disconnect':
@@ -1102,7 +1093,7 @@ document.addEventListener('submit', e => {
   if (kind === 'settings') {
     const fd = new FormData(f);
     const list = k => String(fd.get(k) || '').split(/[,\n]/).map(s => s.trim()).filter(Boolean);
-    S.pendingSettings = Object.assign({}, S.pendingSettings, { cycle_start_day: Number(fd.get('cycle_start_day')), categories: list('categories'), methods: list('methods'), beneficiaries: list('beneficiaries') });
+    S.pendingSettings = Object.assign({}, S.pendingSettings, { cycle_start_day: Number(fd.get('cycle_start_day')), categories: list('categories'), methods: list('methods') });
     S.settings = Object.assign({}, S.settings, S.pendingSettings);
     save(); toast('설정을 저장했어요'); render(); sync();
   }

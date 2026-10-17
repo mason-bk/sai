@@ -771,6 +771,10 @@ function settingsView() {
       <div class="err" id="setup-err"></div><button class="btn ghost" type="submit">새 코드로 연결</button></form>
     <div class="field"><button class="btn danger" data-act="disconnect">이 기기 연결 해제</button>
       <p class="hint">공유 대기 중인 기록이 있으면 먼저 동기화돼야 해요.</p></div>
+    <h2>앱 업데이트</h2>
+    <p class="hint" style="font-size:14px" id="ver">${esc(verText())}</p>
+    <div class="field"><button class="btn ghost" data-act="update">최신 버전 받기</button>
+      <p class="hint">기록은 그대로 남아요. 홈 화면 앱을 지우고 다시 추가할 필요 없어요.</p></div>
     <p class="hint" style="text-align:center;margin-top:24px">사이 MVP · 기록 원본은 구글 시트에 있어요</p>`;
 }
 
@@ -910,6 +914,7 @@ document.addEventListener('click', e => {
       { const id = draft.id; askDelete(id, () => { saved = true; $('#sheet').close(); }); }
       break;
     case 'csv': exportCsv(); break;
+    case 'update': applyUpdate(); break;
     case 'disconnect':
       if (Object.keys(S.outbox).length) { toast('공유 대기 기록이 있어요. 먼저 동기화해 주세요'); break; }
       if (confirm('이 기기 연결을 해제할까요? 기록은 구글 시트에 남아 있어요.')) { localStorage.removeItem(STORE); S = blank(); render(); }
@@ -1018,10 +1023,47 @@ document.addEventListener('focusin', e => {
   }
 });
 
+/* ---------------- 앱 업데이트 ---------------- */
+// 버전 = sw.js의 CACHE 이름. 이 화면을 연 시점의 버전과 지금 서버의 sw.js를 비교한다.
+let verRunning = '', verLatest = '', verCheckedAt = 0;
+function verText() {
+  if (!verRunning) return '버전 확인 중';
+  return '현재 ' + verRunning + (verLatest !== verRunning ? ' · 새 버전이 있어요 (' + verLatest + ')' : ' · 최신이에요');
+}
+async function checkUpdate(force) {
+  if (!force && Date.now() - verCheckedAt < 5 * 60e3) return verLatest !== verRunning;
+  verCheckedAt = Date.now();
+  try {
+    const src = await (await fetch('sw.js?t=' + Date.now(), { cache: 'no-store' })).text();
+    const v = (src.match(/sai-shell-([\w.-]+)/) || [])[1];
+    if (v) { verLatest = v; if (!verRunning) verRunning = v; }
+  } catch (e) { return false; }
+  const el = $('#ver'); if (el) el.textContent = verText();
+  return verLatest !== verRunning;
+}
+async function applyUpdate() {
+  if ($('#sheet').open) { toast('입력을 마친 뒤 업데이트해 주세요'); return; }
+  if (!('serviceWorker' in navigator)) { location.reload(); return; }
+  toast('최신 버전을 받는 중이에요');
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (reg) {
+      await reg.update();
+      const w = reg.installing || reg.waiting;
+      if (w && w.state !== 'activated') await new Promise(r => { w.addEventListener('statechange', () => { if (w.state === 'activated' || w.state === 'redundant') r(); }); setTimeout(r, 8000); });
+    }
+  } catch (e) { /* 오프라인이면 그냥 다시 연다 */ }
+  location.reload();
+}
+async function autoCheckUpdate() {
+  if (await checkUpdate(false) && !$('#sheet').open) toast('새 버전이 있어요', '적용', applyUpdate);
+}
+
 /* ---------------- 시작 ---------------- */
 window.addEventListener('online', () => { renderStatus(); sync(); });
 window.addEventListener('offline', renderStatus);
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sync(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { sync(); autoCheckUpdate(); } });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js');
 render();
 sync();
+setTimeout(autoCheckUpdate, 3000);

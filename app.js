@@ -76,7 +76,7 @@ function toast(msg, action, onAction) {
 function askDelete(id, after) {
   const t = S.txs[id]; if (!t) return;
   const dlg = $('#confirm');
-  dlg.innerHTML = `<div class="confirm-box">
+  dlg.innerHTML = `<div class="confirm-box" tabindex="-1" autofocus>
     <b>이 기록을 삭제할까요?</b>
     <p>${esc(t.merchant || t.category || '기록한 지출')} · ${won(t.amount)}원<br><span class="muted">${md(t.date)} · 두 사람 모두에게서 지워져요</span></p>
     <div class="confirm-btns"><button type="button" value="cancel" class="btn ghost">취소</button><button type="button" value="ok" class="btn btn-del">삭제</button></div></div>`;
@@ -101,7 +101,8 @@ function setX(row, x, animate) {
   const tx = row.querySelector('.tx'), del = row.querySelector('.swipe-del');
   tx.style.transition = del.style.transition = animate ? '' : 'none';
   tx.style.transform = x ? `translate3d(${x}px,0,0)` : '';
-  const p = Math.min(1, -x / SWIPE_W);
+  const p = Math.max(0, Math.min(1, -x / SWIPE_W));
+  del.tabIndex = row.classList.contains('open') ? 0 : -1;
   del.style.opacity = p ? String(0.35 + 0.65 * p) : '';
 }
 function closeSwipes(except) {
@@ -135,11 +136,12 @@ function swipeEnd() {
   if (sw.mode === 'h') {
     const moved = sw.cur - sw.base;
     // 빠르게 튕기거나 20px 이상 밀면 그 방향으로 확정
-    const open = sw.v < -0.3 ? true : sw.v > 0.3 ? false : sw.base === 0 ? moved < -20 : moved < 20;
+    const open = Math.abs(moved) < 12 ? sw.base < 0
+      : sw.v < -0.3 ? true : sw.v > 0.3 ? false : sw.base === 0 ? moved <= -20 : moved < 20;
     sw.row.classList.remove('dragging');
     sw.row.classList.toggle('open', open);
     setX(sw.row, open ? -SWIPE_W : 0, true);
-    swipedAt = Date.now();
+    if (Math.abs(moved) >= 12) swipedAt = Date.now();
   }
   sw = null;
 }
@@ -152,7 +154,13 @@ document.addEventListener('touchstart', e => {
 }, { passive: true });
 document.addEventListener('touchmove', e => { const p = e.touches[0]; swipeMove(p.clientX, p.clientY, e.timeStamp, e); }, { passive: false });
 document.addEventListener('touchend', swipeEnd);
-document.addEventListener('touchcancel', swipeEnd);
+function swipeCancel() {
+  if (!sw) return;
+  sw.row.classList.remove('dragging');
+  setX(sw.row, sw.base, true);
+  sw = null;
+}
+document.addEventListener('touchcancel', swipeCancel);
 // 마우스(맥 브라우저)
 document.addEventListener('pointerdown', e => {
   if (e.pointerType === 'touch') return;
@@ -163,6 +171,8 @@ document.addEventListener('pointerdown', e => {
 });
 document.addEventListener('pointermove', e => { if (e.pointerType !== 'touch') swipeMove(e.clientX, e.clientY, e.timeStamp, null); });
 document.addEventListener('pointerup', e => { if (e.pointerType !== 'touch') swipeEnd(); });
+document.addEventListener('pointercancel', e => { if (e.pointerType !== 'touch') swipeCancel(); });
+window.addEventListener('blur', swipeCancel);
 
 /* ---------------- 주기 ---------------- */
 function cycleRange(offset) {
@@ -260,20 +270,81 @@ function upsert(rec) {
 /* ---------------- 화면 ---------------- */
 let tab = 'home', offset = 0, filter = { q: '', kind: 'all', who: '' };
 
+// Patch only changed UI nodes. Stable keys keep focus, disclosures and transaction rows alive.
+const painted = new WeakMap(), dirtyControls = new WeakSet();
+let renderedScreen = '', lastMarkup = '';
+const uiKey = el => el.nodeType === 1 ? el.id || el.dataset.uiKey || el.dataset.id
+  || (el.dataset.act ? el.dataset.act + ':' + (el.dataset.v || '') : '')
+  || (el.dataset.input ? 'input:' + el.dataset.input : '')
+  || (el.dataset.form ? 'form:' + el.dataset.form : '') : '';
+function patchUI(parent, next) {
+  const old = [...parent.childNodes], used = new Set();
+  const keyed = new Map(old.filter(uiKey).map(el => [uiKey(el), el]));
+  let cursor = parent.firstChild;
+  for (const wanted of [...next.childNodes]) {
+    const key = uiKey(wanted);
+    let current = key ? keyed.get(key) : old.find(el => !used.has(el) && !uiKey(el) && el.nodeType === wanted.nodeType && el.nodeName === wanted.nodeName);
+    if (current && (current.nodeType !== wanted.nodeType || current.nodeName !== wanted.nodeName)) current = null;
+    if (!current) current = wanted.cloneNode(true);
+    used.add(current);
+    if (current !== cursor) parent.insertBefore(current, cursor);
+    if (current.nodeType === 1) {
+      const markup = wanted.outerHTML;
+      if (painted.get(current) !== markup) {
+        const preserveValue = dirtyControls.has(current);
+        const value = preserveValue ? current.value : null;
+        for (const attr of [...current.attributes]) {
+          if (current.tagName === 'DETAILS' && attr.name === 'open') continue;
+          if (!wanted.hasAttribute(attr.name)) current.removeAttribute(attr.name);
+        }
+        for (const attr of wanted.attributes) {
+          if (current.getAttribute(attr.name) !== attr.value) current.setAttribute(attr.name, attr.value);
+        }
+        patchUI(current, wanted);
+        if (preserveValue) current.value = value;
+        else if (current.matches('input,select,textarea') && current.value !== wanted.value) current.value = wanted.value;
+        painted.set(current, markup);
+      }
+    } else if (current.nodeValue !== wanted.nodeValue) current.nodeValue = wanted.nodeValue;
+    cursor = current.nextSibling;
+  }
+  old.forEach(el => { if (!used.has(el)) el.remove(); });
+}
 function render() {
   const app = $('#app');
-  if (!S.cfg) return app.innerHTML = setupView();
-  if (!S.me) return app.innerHTML = whoView();
-  app.innerHTML = `<div class="wrap">
+  const nextScreen = !S.cfg ? 'setup' : !S.me ? 'who' : tab;
+  const markup = !S.cfg ? setupView() : !S.me ? whoView() : `<div class="wrap">
     <header class="top"><div class="brand">${logo()}사이</div>
       <button class="who" data-act="tab" data-v="settings">${esc(S.me)}의 기록</button></header>
-    ${tab === 'home' ? homeView() : tab === 'list' ? listView() : settingsView()}
+    <main id="view">${tab === 'home' ? homeView() : tab === 'list' ? listView() : settingsView()}</main>
   </div>
   <nav class="tabs" aria-label="메뉴">
     ${navBtn('home', '홈', 'home')}${navBtn('list', '내역', 'ledger')}
     <button class="plus" data-act="add" aria-label="지출 기록"><span class="add-icon">${icon('plus')}</span><span>기록</span></button>
     ${navBtn('settings', '설정', 'settings')}
   </nav>`;
+  if (renderedScreen !== nextScreen) {
+    app.innerHTML = markup;
+    renderedScreen = nextScreen;
+  } else if (markup !== lastMarkup) {
+    const y = scrollY, active = document.activeElement;
+    const selection = active && typeof active.selectionStart === 'number'
+      ? [active.selectionStart, active.selectionEnd, active.selectionDirection] : null;
+    const anchor = [...app.querySelectorAll('[data-ui-key]')].find(el => {
+      const r = el.getBoundingClientRect(); return r.top <= 100 && r.bottom > 100;
+    });
+    const top = anchor && anchor.getBoundingClientRect().top;
+    const template = document.createElement('template');
+    template.innerHTML = markup;
+    patchUI(app, template.content);
+    if (active && active.isConnected && document.activeElement !== active) {
+      active.focus({ preventScroll: true });
+      if (selection) active.setSelectionRange(...selection);
+    }
+    const shift = anchor && anchor.isConnected ? anchor.getBoundingClientRect().top - top : 0;
+    scrollTo(0, Math.max(0, y + shift));
+  }
+  lastMarkup = markup;
   renderStatus();
 }
 const navBtn = (k, label, ic) => `<button data-act="tab" data-v="${k}" ${tab === k ? 'aria-current="page"' : ''}><span class="nav-icon">${icon(ic)}</span><span>${label}</span></button>`;
@@ -441,18 +512,18 @@ function homeView() {
 
   const periods = `<div class="seg seg4" role="group" aria-label="기간">${MODES.map(([k, l]) => `<button data-act="vmode" data-v="${k}" aria-pressed="${view.mode === k}">${l}</button>`).join('')}</div>`;
   const head = `
-    ${view.mode === 'custom' ? `<div class="row2 custom-dates">
+    ${view.mode === 'custom' ? `<div class="row2 custom-dates" data-ui-key="custom-dates">
       <label>시작일<input type="date" class="in" data-input="vfrom" value="${esc(view.from || r.start)}" max="${td}" aria-label="시작일"></label>
       <label>끝일<input type="date" class="in" data-input="vto" value="${esc(view.to || r.end)}" max="${td}" aria-label="끝일"></label></div>` : ''}
-    <div class="filters" role="group" aria-label="지출 필터">
+    <div class="filters" data-ui-key="filters" role="group" aria-label="지출 필터">
       ${[['cats', '분류'], ['benes', '누구 몫'], ['payers', '결제자']].map(([k, l]) => `<button class="chip" data-act="vfilter" data-v="${k}" aria-pressed="${view[k].length > 0}"><span>${l}${view[k].length ? ' ' + view[k].length : ''}</span>${icon('down')}</button>`).join('')}
       ${filtered ? '<button class="link" data-act="vclear">초기화</button>' : ''}
     </div>
-    ${filtered ? `<p class="hint filter-summary">${esc([...view.cats, ...view.benes, ...view.payers.map(p => p + ' 결제')].join(' · '))}만 보는 중</p>` : ''}
+    ${filtered ? `<p class="hint filter-summary" data-ui-key="filter-summary">${esc([...view.cats, ...view.benes, ...view.payers.map(p => p + ' 결제')].join(' · '))}만 보는 중</p>` : ''}
     <p class="status" id="status" role="status"></p>`;
 
   const hero = `
-    <section class="hero home-hero" aria-label="기간 요약">
+    <section data-ui-key="hero" class="hero home-hero" aria-label="기간 요약">
       <div class="cyc">
         <div class="lbl"><b>${esc(r.title)} ${filtered ? '선택 지출' : '순지출'}</b><span>${r.label}</span></div>
         ${r.custom ? '' : `<div class="cyc-actions"><button data-act="hcyc" data-v="-1" aria-label="이전 ${UNIT[r.unit].name}">${icon('left')}</button><button data-act="hcyc" data-v="1" aria-label="다음 ${UNIT[r.unit].name}" ${hOff >= 0 ? 'disabled' : ''}>${icon('right')}</button></div>`}
@@ -465,7 +536,7 @@ function homeView() {
     </section>`;
 
   if (!txs.length) {
-    return hero + head + recentBlock() + `<div class="card empty-period"><div class="empty">${filtered ? '이 조건의 지출이 없어요.<br>필터를 바꾸면 다른 기록을 볼 수 있어요.' : '이 기간의 지출이 없어요.<br>기록이 쌓이면 여기에 분석이 보여요.'}</div></div>`;
+    return hero + head + recentBlock() + `<div class="card empty-period" data-ui-key="empty-period"><div class="empty">${filtered ? '이 조건의 지출이 없어요.<br>필터를 바꾸면 다른 기록을 볼 수 있어요.' : '이 기간의 지출이 없어요.<br>기록이 쌓이면 여기에 분석이 보여요.'}</div></div>`;
   }
 
   const cats = groupSum(txs, t => t.category || '미분류');
@@ -477,10 +548,10 @@ function homeView() {
   return hero + head + recentBlock() +
     (r.unit === 'month' ? paceChart(r, pr, txs, prevTxs, running ? elapsed : spanDays) : '') +
     trendChart(r) +
-    `<h2>분류별 <span class="h2sub">눌러서 그 분류만 보기</span></h2>` + rankBars(cats, 'vcat', view.cats, 8) +
-    (benes.length > 1 || view.benes.length ? `<h2>누구 몫</h2>` + rankBars(benes, 'vbene', view.benes) : '') +
-    (payers.length > 1 || view.payers.length ? `<h2>결제자</h2>` + rankBars(payers, 'vpayer', view.payers) : '') +
-    (merch.length ? `<h2>많이 쓴 곳</h2><div class="card">${merch.map(([m, v], i) => `
+    `<h2 data-ui-key="cats-title">분류별 <span class="h2sub">눌러서 그 분류만 보기</span></h2>` + rankBars(cats, 'vcat', view.cats, 8) +
+    (benes.length > 1 || view.benes.length ? `<h2 data-ui-key="benes-title">누구 몫</h2>` + rankBars(benes, 'vbene', view.benes) : '') +
+    (payers.length > 1 || view.payers.length ? `<h2 data-ui-key="payers-title">결제자</h2>` + rankBars(payers, 'vpayer', view.payers) : '') +
+    (merch.length ? `<h2 data-ui-key="merchants-title">많이 쓴 곳</h2><div class="card" data-ui-key="merchants">${merch.map(([m, v], i) => `
       <div class="bar-row"><div class="bar-top"><span>${i + 1}. ${esc(m)} <span class="muted">${counts[m]}건</span></span><b class="num">${won(v)}원</b></div></div>`).join('')}</div>` : '');
 }
 
@@ -492,7 +563,7 @@ function rankBars(entries, act, selected, limit) {
   }
   const pos = entries.reduce((s, e) => s + Math.max(0, e[1]), 0) || 1;
   const max = Math.max(1, ...list.map(e => e[1]));
-  return `<div class="card">${list.map(([k, v, other]) => {
+  return `<div class="card" data-ui-key="rank-${act}">${list.map(([k, v, other]) => {
     const pct = Math.round(Math.max(0, v) / pos * 1000) / 10;
     const on = selected.includes(k);
     const inner = `<div class="bar-top"><span>${esc(k)}</span><span><b class="num">${won(v)}원</b> <span class="pct num">${pct}%</span></span></div>
@@ -505,7 +576,7 @@ function rankBars(entries, act, selected, limit) {
 function recentBlock() {
   // 분석 기간을 바꿔도 방금 입력한 기록은 바로 확인할 수 있다.
   const recent = liveTxs().sort(byNewest).slice(0, 3);
-  return `<section class="recent" aria-label="최근 기록">
+  return `<section data-ui-key="recent" class="recent" aria-label="최근 기록">
     <div class="section-head"><div><h2>최근 기록</h2><p class="hint">전체 기간 · 최근 3건</p></div>
       <button class="quick-add" data-act="add">${icon('plus')}<span>지출 기록</span></button></div>
     <div class="card">${recent.length ? recent.map(txRow).join('') : '<div class="empty">첫 지출을 기록해 보세요.<br>두 사람의 기록이 여기에 모여요.</div>'}</div>
@@ -530,8 +601,8 @@ function paceChart(r, pr, txs, prevTxs, upto) {
   const ticks = [0, ymax / 2, ymax];
   const last = cur.length - 1;
   const pts = Array.from({ length: D }, (_, i) => ({ x: x(i), label: `${i + 1}일째 (${md(addDays(r.start, i))})`, a: cur[i], b: prev[i] }));
-  return `<h2>누적 지출 흐름</h2>
-  <div class="card chart-card">
+  return `<h2 data-ui-key="pace-title">누적 지출 흐름</h2>
+  <div class="card chart-card" data-ui-key="pace-chart">
     <div class="legend"><span><i class="key" style="background:var(--accent)"></i>${hOff === 0 ? '이번 달' : '선택한 달'}</span>${prev.length ? `<span><i class="key" style="background:var(--prev)"></i>${hOff === 0 ? '지난달' : '그 전달'}</span>` : ''}</div>
     <div class="chart" data-pts='${esc(JSON.stringify(pts))}' data-w="${W}">
     <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="이번 달 누적 ${won(cur[last] || 0)}원${prev.length ? ', 지난달 최종 ' + won(prev[prev.length - 1]) + '원' : ''}">
@@ -572,8 +643,8 @@ function trendChart(r) {
   const pts = periods.map((p, i) => ({ x: L + band * (i + .5), label: p.title + ' ' + p.range + (unit !== 'day' && td >= p.start && td <= p.end ? ' (진행 중)' : ''), a: vals[i] }));
   const done = vals.filter((v, i) => periods[i].end < td);
   const avg = done.length ? done.reduce((s, v) => s + v, 0) / done.length : 0;
-  return `<h2>${u.trendName} 지출 <span class="h2sub">최근 ${n}${unit === 'month' ? '개월' : unit === 'week' ? '주' : '일'}</span></h2>
-  <div class="card chart-card">
+  return `<h2 data-ui-key="trend-title">${u.trendName} 지출 <span class="h2sub">최근 ${n}${unit === 'month' ? '개월' : unit === 'week' ? '주' : '일'}</span></h2>
+  <div class="card chart-card" data-ui-key="trend-chart">
     <div class="chart" data-pts='${esc(JSON.stringify(pts))}' data-w="${W}" data-bar="1">
     <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="최근 ${n}${u.name} 지출, 평균 ${won(Math.round(avg))}원">
       <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
@@ -587,16 +658,22 @@ function trendChart(r) {
 }
 
 /* 차트 탭/호버: 가장 가까운 점의 값을 보여준다 */
+const chartPoints = new WeakMap();
 function chartPoint(e) {
   const box = e.target.closest('.chart'); if (!box) return;
-  const pts = JSON.parse(box.dataset.pts), svg = box.querySelector('svg'), rect = svg.getBoundingClientRect();
+  let cached = chartPoints.get(box);
+  if (!cached || cached.source !== box.dataset.pts) {
+    cached = { source: box.dataset.pts, points: JSON.parse(box.dataset.pts) }; chartPoints.set(box, cached);
+  }
+  const pts = cached.points, svg = box.querySelector('svg'), rect = svg.getBoundingClientRect();
   const sx = (e.clientX - rect.left) / rect.width * Number(box.dataset.w);
   let best = 0; pts.forEach((p, i) => { if (Math.abs(p.x - sx) < Math.abs(pts[best].x - sx)) best = i; });
   const p = pts[best], tip = box.querySelector('.tip');
   if (p.a == null && p.b == null) { tip.classList.remove('on'); return; }
   tip.innerHTML = `<b>${esc(p.label)}</b>` + (p.a != null ? `<span>${box.dataset.bar ? '' : '이번 '}${won(p.a)}원</span>` : '') + (p.b != null ? `<span class="muted">지난 ${won(p.b)}원</span>` : '');
   const px = p.x / Number(box.dataset.w) * rect.width;
-  tip.style.left = Math.min(Math.max(px, 70), rect.width - 70) + 'px';
+  const half = Math.min(tip.offsetWidth / 2, rect.width / 2);
+  tip.style.left = Math.min(Math.max(px, half), rect.width - half) + 'px';
   tip.classList.add('on');
   const xh = box.querySelector('.xh'); if (xh) { xh.setAttribute('x1', p.x); xh.setAttribute('x2', p.x); xh.classList.add('on'); }
 }
@@ -609,7 +686,8 @@ function filterSheet(kind) {
     : kind === 'benes' ? [...new Set([...S.settings.beneficiaries, ...liveTxs().map(t => t.beneficiary || '공동')])]
     : USERS;
   const dlg = $('#sheet');
-  dlg.innerHTML = `<div class="sheet-h"><button type="button" data-act="close">닫기</button><b id="sheet-title">${title}만 보기</b><button type="button" class="save" data-act="vapply" data-v="${kind}">적용</button></div>
+  dlg.classList.add('filter-sheet');
+  dlg.innerHTML = `<div class="sheet-h"><button type="button" data-act="close">닫기</button><b id="sheet-title" tabindex="-1" autofocus>${title}만 보기</b><button type="button" class="save" data-act="vapply" data-v="${kind}">적용</button></div>
     <div class="sheet-b"><p class="hint">여러 개 고를 수 있어요. 아무것도 안 고르면 전체예요.</p>
     <div class="chips" id="vopts" style="margin-top:12px">${opts.map(o => `<button type="button" class="chip" data-act="vtoggle" data-v="${esc(o)}" aria-pressed="${view[kind].includes(o)}">${esc(o)}</button>`).join('')}</div>
     <div class="field"><button type="button" class="btn" data-act="vapply" data-v="${kind}">적용</button></div>
@@ -643,7 +721,7 @@ function listView() {
     if (t.date !== lastDay) {
       if (rows) rows += '</div>';
       const d = parseDate(t.date);
-      rows += `<p class="day">${d.getMonth() + 1}.${d.getDate()} ${WEEK[d.getDay()]}요일</p><div class="card">`;
+      rows += `<p class="day" data-ui-key="day-${t.date}">${d.getMonth() + 1}.${d.getDate()} ${WEEK[d.getDay()]}요일</p><div class="card" data-ui-key="rows-${t.date}">`;
       lastDay = t.date;
     }
     rows += txRow(t);
@@ -653,12 +731,12 @@ function listView() {
   return `
     <h1>내역</h1>
     ${filter.kind === 'refund_pending' ? '<p class="hint">환불 대기는 모든 기간에서 보여줘요.</p>' : `
-    <div class="hero" style="padding:8px 12px;margin-top:10px"><div class="cyc">
+    <div class="hero" data-ui-key="list-cycle" style="padding:8px 12px;margin-top:10px"><div class="cyc">
       <button data-act="cyc" data-v="-1" aria-label="이전 주기">${icon('left')}</button>
       <div class="lbl"><b>${offset === 0 ? '이번 달' : r.year + '년'}</b>${r.label}</div>
       <button data-act="cyc" data-v="1" aria-label="다음 주기" ${offset >= 0 ? 'disabled' : ''}>${icon('right')}</button></div></div>`}
     <input class="in search" type="search" placeholder="거래처, 메모 검색" value="${esc(filter.q)}" data-input="q" aria-label="검색">
-    <div class="chips" style="margin-top:10px">${kinds.map(([k, l]) => `<button class="chip" data-act="kind" data-v="${k}" aria-pressed="${filter.kind === k}">${l}</button>`).join('')}</div>
+    <div class="chips" data-ui-key="list-kinds" style="margin-top:10px">${kinds.map(([k, l]) => `<button class="chip" data-act="kind" data-v="${k}" aria-pressed="${filter.kind === k}">${l}</button>`).join('')}</div>
     <div class="field"><select class="in" data-input="who" aria-label="대상">
       <option value="">모든 대상</option>${S.settings.beneficiaries.map(b => `<option ${filter.who === b ? 'selected' : ''}>${esc(b)}</option>`).join('')}</select></div>
     <p class="status" id="status"></p>
@@ -722,6 +800,7 @@ function openEntry(id) {
   if (!ex && S.draft && S.draft.created_by === S.me) draft = Object.assign({}, S.draft, { id: uid(), created_at: Date.now() });
   saved = false;
   const dlg = $('#sheet');
+  dlg.classList.remove('filter-sheet');
   dlg.innerHTML = entryHtml(!!ex);
   dlg.showModal();
   const a = $('#amount');
@@ -736,7 +815,7 @@ function entryHtml(isEdit) {
   const methods = st.methods.includes(d.method) || !d.method ? st.methods : st.methods.concat(d.method);
   const benes = st.beneficiaries.includes(d.beneficiary) ? st.beneficiaries : st.beneficiaries.concat(d.beneficiary);
   return `<form data-form="entry" novalidate>
-    <div class="sheet-h"><button type="button" data-act="close">취소</button><b id="sheet-title">${isEdit ? '기록 수정' : '지출 기록'}</b><button type="submit" class="save">저장</button></div>
+    <div class="sheet-h"><button type="button" data-act="close">취소</button><b id="sheet-title" tabindex="-1" autofocus>${isEdit ? '기록 수정' : '지출 기록'}</b><button type="submit" class="save">저장</button></div>
     <div class="sheet-b">
       <div class="field"><label for="amount">얼마를 썼나요?</label>
         <div class="amount-in"><input id="amount" name="amount" inputmode="numeric" autocomplete="off" placeholder="0" value="${d.amount ? won(d.amount) : ''}" class="num"><span>원</span></div>
@@ -808,7 +887,7 @@ document.addEventListener('click', e => {
     case 'askdel': askDelete(v); break;
     case 'close': stashDraft(); $('#sheet').close(); break;
     case 'cyc': offset = Math.min(0, offset + Number(v)); render(); break;
-    case 'vmode': view.mode = v; hOff = 0; if (v === 'custom' && !view.from) { const r = cycleRange(0); view.from = r.start; view.to = today(); } saveView(); render(); break;
+    case 'vmode': if (view.mode === v) break; view.mode = v; hOff = 0; if (v === 'custom' && !view.from) { const r = cycleRange(0); view.from = r.start; view.to = today(); } saveView(); render(); break;
     case 'hcyc': hOff = Math.min(0, hOff + Number(v)); render(); break;
     case 'vfilter': filterSheet(v); break;
     case 'vtoggle': b.setAttribute('aria-pressed', String(b.getAttribute('aria-pressed') !== 'true')); break;
@@ -820,7 +899,7 @@ document.addEventListener('click', e => {
       view[k] = view[k].includes(v) ? view[k].filter(x => x !== v) : [...view[k], v]; saveView(); render(); break;
     }
     case 'refunds': tab = 'list'; filter.kind = 'refund_pending'; render(); break;
-    case 'kind': filter.kind = v; render(); break;
+    case 'kind': if (filter.kind === v) break; filter.kind = v; render(); break;
     case 'me': S.me = v; save(); render(); break;
     case 'sync': sync(); break;
     case 'merchant': $('#merchant').value = v; draft.merchant = v; suggestFor(v); break;
@@ -839,7 +918,8 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('input', e => {
   const k = e.target.dataset && e.target.dataset.input;
-  if (k === 'q') { filter.q = e.target.value; const pos = e.target.selectionStart; render(); const el = $('[data-input=q]'); el.focus(); el.setSelectionRange(pos, pos); }
+  if (e.target.matches('[data-form=settings] input,[data-form=settings] select,[data-form=settings] textarea,[data-form=setup] input,[data-form=setup] textarea')) dirtyControls.add(e.target);
+  if (k === 'q') { filter.q = e.target.value; if (!e.isComposing) render(); }
   if (k === 'who') { filter.who = e.target.value; render(); }
   if (k === 'vfrom' || k === 'vto') { if (e.target.value) { view[k === 'vfrom' ? 'from' : 'to'] = e.target.value; saveView(); render(); } }
   if (e.target.id === 'amount') {
@@ -848,6 +928,7 @@ document.addEventListener('input', e => {
     $('#entry-err').textContent = '';
   }
 });
+document.addEventListener('compositionend', e => { if (e.target.dataset.input === 'q') { filter.q = e.target.value; render(); } });
 document.addEventListener('change', e => {
   if (e.target.id === 'merchant') { draft.merchant = e.target.value.trim(); suggestFor(draft.merchant); }
 });
@@ -922,12 +1003,18 @@ function exportCsv() {
 
 /* ---------------- 아이폰 키보드 대응 ---------------- */
 if (window.visualViewport) {
-  const fit = () => document.documentElement.style.setProperty('--vvh', visualViewport.height + 'px');
-  visualViewport.addEventListener('resize', fit); fit();
+  const fit = () => {
+    document.documentElement.style.setProperty('--vvh', visualViewport.height + 'px');
+    document.documentElement.style.setProperty('--vvt', visualViewport.offsetTop + 'px');
+  };
+  visualViewport.addEventListener('resize', fit);
+  visualViewport.addEventListener('scroll', fit); fit();
 }
 document.addEventListener('focusin', e => {
   if (e.target.closest('#sheet') && e.target.matches('input:not(#amount),select,textarea')) {
-    setTimeout(() => e.target.scrollIntoView({ block: 'center', behavior: 'smooth' }), 250);
+    setTimeout(() => {
+      if (document.activeElement === e.target && e.target.isConnected) e.target.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+    }, 250);
   }
 });
 

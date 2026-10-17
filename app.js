@@ -240,7 +240,7 @@ async function sync() {
     if (syncAgain) { syncAgain = false; sync(); }
   }
 }
-// 이관한 기존 기록은 결제자가 비어 있다 → 예전 '누구 몫'(엄마 등, 없으면 공동)으로 채워 시트에도 반영
+// 이관한 기존 기록은 결제자가 비어 있다 → 예전 '누구 몫' 값(없으면 공동)으로 채워 시트에도 반영
 function fillPayers() {
   const todo = liveTxs().filter(t => !t.payer && !S.outbox[t.id]);
   todo.forEach(t => upsert(Object.assign({}, t, { payer: t.beneficiary || '공동' })));

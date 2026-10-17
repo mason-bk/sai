@@ -177,7 +177,7 @@ function render() {
   renderStatus();
 }
 const navBtn = (k, label, ic) => `<button data-act="tab" data-v="${k}" ${tab === k ? 'aria-current="page"' : ''}><span aria-hidden="true" style="font-size:20px">${ic}</span>${label}</button>`;
-const logo = () => `<svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><circle cx="10" cy="13" r="7.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="16" cy="13" r="7.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>`;
+const logo = () => `<svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M3 4H7Q9.25 4 11 5.5V20Q9.25 18.5 7 18.5H3Z M5 10V12H9V10Z"/><path d="M13 5.5Q14.75 4 17 4H21V18.5H17Q14.75 18.5 13 20Z M15 10V12H19V10Z"/></svg>`;
 
 function renderStatus() {
   const el = $('#status'); if (!el) return;

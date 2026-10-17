@@ -9,6 +9,8 @@ const DEFAULT_SETTINGS = {
   beneficiaries: ['공동', '아내', '남편'],
 };
 const USERS = ['아내', '남편'];
+// 결제자 목록 = 두 사람 + 공유 설정의 목록(시트 Settings의 beneficiaries 키를 결제자 목록으로 재사용, v16)
+const payerList = () => [...new Set([...USERS, ...(S.settings.beneficiaries || [])])];
 const TYPE_LABEL = { expense: '지출', refund: '환불', transfer: '지출 제외' };
 
 let S = load();
@@ -227,6 +229,7 @@ async function sync() {
     S.since = res.now; S.lastSync = Date.now();
     if (!S.pendingSettings) S.settings = normSettings(res.settings);
     save();
+    if (fillPayers()) syncAgain = true;
   } catch (e) {
     const why = e.code ? e.code + ' · ' + (e.message || '') : e.name === 'AbortError' ? '30초 응답 없음' : (e.name || '') + ' ' + (e.message || '');
     syncError = e.code === 'unauthorized' ? '설정 코드가 바뀌었어요. 설정 → 설정 코드 바꾸기'
@@ -236,6 +239,12 @@ async function sync() {
     render();
     if (syncAgain) { syncAgain = false; sync(); }
   }
+}
+// 이관한 기존 기록은 결제자가 비어 있다 → 예전 '누구 몫'(엄마 등, 없으면 공동)으로 채워 시트에도 반영
+function fillPayers() {
+  const todo = liveTxs().filter(t => !t.payer && !S.outbox[t.id]);
+  todo.forEach(t => upsert(Object.assign({}, t, { payer: t.beneficiary || '공동' })));
+  return todo.length > 0;
 }
 async function api(body) {
   const ctrl = new AbortController();
@@ -472,7 +481,7 @@ function cycleOffsetOf(date) {
   return -120;
 }
 const matches = t => (!view.cats.length || view.cats.includes(t.category || '미분류'))
-  && (!view.payers.length || view.payers.includes(t.payer || '-'));
+  && (!view.payers.length || view.payers.includes(t.payer || '공동'));
 const pick = r => liveTxs().filter(t => t.type !== 'transfer' && t.date >= r.start && t.date <= r.end && matches(t));
 const sum = txs => txs.reduce((s, t) => s + signed(t), 0);
 function groupSum(txs, key) {
@@ -539,7 +548,7 @@ function homeView() {
   }
 
   const cats = groupSum(txs, t => t.category || '미분류');
-  const payers = groupSum(txs, t => t.payer || '-');
+  const payers = groupSum(txs, t => t.payer || '공동');
   const merch = groupSum(txs.filter(t => t.merchant), t => t.merchant).slice(0, 5);
   const counts = {}; txs.forEach(t => { if (t.merchant) counts[t.merchant] = (counts[t.merchant] || 0) + 1; });
 
@@ -681,7 +690,7 @@ function filterSheet(kind) {
   const title = { cats: '분류', benes: '누구 몫', payers: '결제자' }[kind];
   const opts = kind === 'cats' ? [...new Set([...S.settings.categories, ...liveTxs().map(t => t.category || '미분류')])]
     : kind === 'benes' ? [...new Set([...S.settings.beneficiaries, ...liveTxs().map(t => t.beneficiary || '공동')])]
-    : USERS;
+    : payerList();
   const dlg = $('#sheet');
   dlg.classList.add('filter-sheet');
   dlg.innerHTML = `<div class="sheet-h"><button type="button" data-act="close">닫기</button><b id="sheet-title" tabindex="-1" autofocus>${title}만 보기</b><button type="button" class="save" data-act="vapply" data-v="${kind}">적용</button></div>
@@ -698,7 +707,7 @@ function txRow(t) {
   return `<div class="swipe" data-id="${esc(t.id)}"><button class="swipe-del" data-act="askdel" data-v="${esc(t.id)}" tabindex="-1" aria-label="삭제">삭제</button><button class="tx" data-act="edit" data-v="${esc(t.id)}">
     <span class="ic" aria-hidden="true">${categoryIcon(t.category)}</span>
     <span class="mid"><span class="m">${esc(t.merchant || t.category || '기록한 지출')}</span>
-      <span class="meta">${d.getMonth() + 1}.${d.getDate()} · ${esc(t.category || '미분류')} · ${esc(t.payer || '-')} 결제
+      <span class="meta">${d.getMonth() + 1}.${d.getDate()} · ${esc(t.category || '미분류')} · ${esc(t.payer || '공동')} 결제
       ${t.refund_pending ? '<span class="tag">환불 대기</span>' : ''}${t.type === 'transfer' ? '<span class="tag q">지출 제외</span>' : ''}${t.created_by === '정기' ? '<span class="tag q">정기</span>' : ''}${S.outbox[t.id] ? '<span class="tag q">공유 대기</span>' : ''}</span></span>
     <span class="a num ${cls}">${t.type === 'refund' ? '<span class="refund-label">환불</span>−' : ''}${won(t.amount)}원</span></button></div>`;
 }
@@ -735,7 +744,7 @@ function listView() {
     <input class="in search" type="search" placeholder="거래처, 메모 검색" value="${esc(filter.q)}" data-input="q" aria-label="검색">
     <div class="chips" data-ui-key="list-kinds" style="margin-top:10px">${kinds.map(([k, l]) => `<button class="chip" data-act="kind" data-v="${k}" aria-pressed="${filter.kind === k}">${l}</button>`).join('')}</div>
     <div class="field"><select class="in" data-input="who" aria-label="결제자">
-      <option value="">모든 결제자</option>${USERS.map(b => `<option ${filter.who === b ? 'selected' : ''}>${esc(b)}</option>`).join('')}</select></div>
+      <option value="">모든 결제자</option>${payerList().map(b => `<option ${filter.who === b ? 'selected' : ''}>${esc(b)}</option>`).join('')}</select></div>
     <p class="status" id="status"></p>
     <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--muted);margin-top:8px"><span>${txs.length}건</span><span class="num">순지출 ${won(net)}원</span></div>
     ${rows || `<div class="empty">${q || filter.kind !== 'all' || filter.who ? '조건에 맞는 기록이 없어요.' : '이 기간의 기록이 없어요.'}</div>`}`;
@@ -754,8 +763,8 @@ function settingsView() {
         <p class="hint">29~31일을 고르면 그날이 없는 달은 말일부터 시작해요.</p></div>
       <div class="field"><label for="cats">분류 (쉼표로 구분)</label><textarea id="cats" class="in" rows="3" name="categories">${esc(st.categories.join(', '))}</textarea></div>
       <div class="field"><label for="mts">결제수단</label><textarea id="mts" class="in" rows="2" name="methods">${esc(st.methods.join(', '))}</textarea></div>
-      <div class="field">
-        <p class="hint">설정은 두 사람에게 같이 적용돼요.</p></div>
+      <div class="field"><label for="bns">결제자 (쉼표로 구분)</label><textarea id="bns" class="in" rows="2" name="beneficiaries">${esc(st.beneficiaries.join(', '))}</textarea>
+        <p class="hint">아내·남편은 항상 있어요. 설정은 두 사람에게 같이 적용돼요.</p></div>
       <div class="field"><button class="btn" type="submit">설정 저장</button></div>
     </form>
     <div class="field"><button class="btn ghost" data-act="sync">지금 동기화</button></div>
@@ -839,7 +848,7 @@ function ruleHtml() {
       <div class="field"><label for="r-day">${d.freq === 'week' ? '요일' : '날짜'}</label><select id="r-day" name="day" class="in">${days.map(([v, l]) => `<option value="${v}" ${Number(d.day) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
         ${d.freq === 'month' ? '<p class="hint">29~31일은 그날이 없는 달엔 말일에 기록돼요.</p>' : ''}</div>
       <div class="row2">
-        <div class="field"><label for="r-payer">결제자</label><select id="r-payer" name="payer" class="in">${USERS.map(u => `<option ${d.payer === u ? 'selected' : ''}>${u}</option>`).join('')}</select></div>
+        <div class="field"><label for="r-payer">결제자</label><select id="r-payer" name="payer" class="in">${payerList().map(u => `<option ${d.payer === u ? 'selected' : ''}>${u}</option>`).join('')}</select></div>
         <div class="field"><label for="r-method">결제수단</label><select id="r-method" name="method" class="in">${methods.map(m => `<option ${d.method === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
       </div>
       <div class="row2">
@@ -947,7 +956,7 @@ function entryHtml(isEdit) {
       <summary>날짜·결제자·결제수단 <span class="sum">${esc(summaryLine())}</span></summary>
       <div class="row2">
         <div class="field"><label for="date">날짜</label><input id="date" name="date" type="date" class="in" value="${esc(d.date)}" max="${today()}"></div>
-        <div class="field"><label for="payer">결제자</label><select id="payer" name="payer" class="in">${USERS.map(u => `<option ${d.payer === u ? 'selected' : ''}>${u}</option>`).join('')}</select></div>
+        <div class="field"><label for="payer">결제자</label><select id="payer" name="payer" class="in">${payerList().map(u => `<option ${d.payer === u ? 'selected' : ''}>${u}</option>`).join('')}</select></div>
       </div>
       <div class="field"><label for="method">결제수단</label><select id="method" name="method" class="in">${methods.map(m => `<option ${d.method === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
       <div class="field"><span class="lab">종류</span><div class="seg">${Object.entries(TYPE_LABEL).map(([k, l]) => `<button type="button" data-act="type" data-v="${k}" aria-pressed="${d.type === k}">${l}</button>`).join('')}</div>
@@ -1093,7 +1102,7 @@ document.addEventListener('submit', e => {
   if (kind === 'settings') {
     const fd = new FormData(f);
     const list = k => String(fd.get(k) || '').split(/[,\n]/).map(s => s.trim()).filter(Boolean);
-    S.pendingSettings = Object.assign({}, S.pendingSettings, { cycle_start_day: Number(fd.get('cycle_start_day')), categories: list('categories'), methods: list('methods') });
+    S.pendingSettings = Object.assign({}, S.pendingSettings, { cycle_start_day: Number(fd.get('cycle_start_day')), categories: list('categories'), methods: list('methods'), beneficiaries: list('beneficiaries') });
     S.settings = Object.assign({}, S.settings, S.pendingSettings);
     save(); toast('설정을 저장했어요'); render(); sync();
   }

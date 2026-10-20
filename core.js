@@ -37,7 +37,29 @@
   /* 순지출 기여: 환불은 빼고, 지출 제외(이체·카드대금)는 0 */
   const signed = t => t.type === 'refund' ? -t.amount : t.type === 'transfer' ? 0 : t.amount;
 
-  /* "12,300", "₩12,300", "(1,000)", "-1,000원" → 숫자 (괄호·마이너스는 음수). 숫자가 아니면 NaN */
+  /* 직접 입력 금액(기록·수정·정기·예산·필터·확인 목록 수정): 양의 정수 1 ~ 9,999,999,999원만.
+   * 공백·₩·원·KRW·올바른 천 단위 쉼표만 정리하고, 그 밖의 글자를 지워 다른 금액으로 만들지 않는다(v22, Astra P0 N01·N02).
+   * 반환 { ok, value, error, digits } · error: empty | negative | decimal | format | zero | over */
+  const MAX_WON = 9999999999;
+  function parseWon(v) {
+    const raw = String(v == null ? '' : v);
+    if (/\d[\s\u00a0]+\d/.test(raw)) return { ok: false, value: 0, error: 'format', digits: '' }; // 숫자 사이 공백은 거부
+    let s = raw.replace(/[\s\u00a0]/g, '');
+    if (!s) return { ok: false, value: 0, error: 'empty', digits: '' };
+    s = s.replace(/^(₩|￦|KRW)/i, '').replace(/(원|KRW)$/i, '');
+    if (/^[-−–(]|^\+/.test(s) || /\)$/.test(s)) return { ok: false, value: 0, error: /^\+/.test(s) ? 'format' : 'negative', digits: '' };
+    if (/^\d[\d,]*\.\d*$|^\.\d+$/.test(s)) return { ok: false, value: 0, error: 'decimal', digits: '' };
+    if (!/^(\d{1,3}(,\d{3})+|\d+)$/.test(s)) return { ok: false, value: 0, error: 'format', digits: '' };
+    const digits = s.replace(/,/g, '').replace(/^0+(?=\d)/, '');
+    if (digits.length > 10 || Number(digits) > MAX_WON) return { ok: false, value: 0, error: 'over', digits };
+    const n = Number(digits);
+    if (!n) return { ok: false, value: 0, error: 'zero', digits };
+    return { ok: true, value: n, error: '', digits };
+  }
+  const validWon = n => Number.isSafeInteger(n) && n >= 1 && n <= MAX_WON;
+
+  /* 파일 금액: "12,300", "₩12,300", "(1,000)", "-1,000원" → 숫자 (괄호·마이너스는 음수). 숫자가 아니면 NaN.
+   * 소수는 반올림하지 않고 그대로 돌려준다(원화 소수는 확인 목록에서 확인 필요로 표시) */
   function parseAmount(v) {
     if (typeof v === 'number') return v;
     let s = String(v == null ? '' : v).trim();
@@ -47,7 +69,7 @@
     s = s.replace(/[₩원\s,]|KRW/gi, '');
     if (/^-/.test(s)) { neg = !neg; s = s.slice(1); }
     if (!/^\d+(\.\d+)?$/.test(s)) return NaN;
-    const n = Math.round(Number(s));
+    const n = Number(s);
     return neg ? -n : n;
   }
 
@@ -435,6 +457,9 @@
       } else if (negRule === 'expense' && negatives && type === 'expense' && !named) {
         unread.push({ raw, why: '수입(양수 금액)은 가져오지 않아요', line }); return;
       }
+      // 원화 소수·한도 초과는 임의로 고치지 않고 확인 필요로 둔다
+      if (!Number.isInteger(amount)) { issues.push(`원화 금액에 소수점이 있어요 (${amount}). 확인해 주세요`); amount = 0; }
+      else if (amount > MAX_WON) { issues.push('9,999,999,999원을 넘어요. 금액을 확인해 주세요'); amount = 0; }
       const item = { date, amount, merchant: merchant.slice(0, 60), type, issues, line, raw };
       // 통화 열이 원화가 아니면 금액을 원화로 쓰지 않는다
       // 고른 금액 열이 원화 환산 열(이름에 원화·KRW·(원))이면 통화 열은 참고로만 남긴다
@@ -484,7 +509,7 @@
   }
 
   const core = {
-    pad, ymd, parseDate, addDays, dayDiff, cycleRange, signed, parseAmount, normMerchant, merchantMatch,
+    pad, ymd, parseDate, addDays, dayDiff, cycleRange, signed, parseAmount, parseWon, validWon, MAX_WON, normMerchant, merchantMatch,
     splitNotices, parseNotices, suggest, makeSuggester, markDuplicates, typeOf,
     decodeText, parseCsv, detectHeaderRow, guessColumns, toDate, rowsToCandidates,
     filterTxs, summarize,

@@ -149,7 +149,10 @@ const store = (() => {
   /* ---------- 기록 ---------- */
   const list = () => Object.values(S.txs).filter(t => !t.deleted);
   // 여러 건을 한 번에: 기기 저장 1회, 전송 1회. 실패하면 모두 되돌린다
+  // 금액 계약: 지우지 않은 기록은 양의 정수 1 ~ 9,999,999,999원. 화면 검사를 지나쳐도 여기서 막는다(v22)
+  const okAmount = n => Number.isSafeInteger(n) && n >= 1 && n <= 9999999999;
   function upsertMany(recs, noSync) {
+    if (!noSync && recs.some(r => !r.deleted && !okAmount(r.amount))) { emit('notice', '금액을 확인해 주세요 (1 ~ 9,999,999,999원)'); return false; }
     const prev = recs.map(r => [r.id, S.txs[r.id], S.outbox[r.id]]);
     recs.forEach(r => {
       const p = S.txs[r.id];

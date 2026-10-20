@@ -1124,6 +1124,12 @@ span.num.frac{white-space:normal}.frac>span{white-space:nowrap}
   .screen-list .list-side .results-sticky:not(.no-stick){position:sticky;margin:14px calc(-1 * var(--gutter)) 0;border:0;border-block:1px solid var(--line);border-radius:0}
   .screen-list .list-side .results-sticky.no-stick{margin:14px calc(-1 * var(--gutter)) 0;border:0;border-block:1px solid var(--line);border-radius:0}
 }
+@container page (max-width:42.6875em){
+  .screen-list #view{display:block}
+  .screen-list .list-side,.screen-list .list-main{display:contents}
+  .screen-list .list-side .results-sticky:not(.no-stick){position:sticky;margin:14px calc(-1 * var(--gutter)) 0;border:0;border-block:1px solid var(--line);border-radius:0}
+  .screen-list .list-side .results-sticky.no-stick{margin:14px calc(-1 * var(--gutter)) 0;border:0;border-block:1px solid var(--line);border-radius:0}
+}
 @container page (max-width:527px){
   .screen-home #view,.screen-recur #view,.screen-settings #view{display:block}
   .recur-side,.recur-main,.set-col{display:contents}
@@ -1425,6 +1431,13 @@ html{scroll-padding-top:var(--sticky-h,0px)}
 .cat-cell[aria-pressed=true]{border:2px solid var(--brand);background:var(--brand-soft);padding:7px 3px}
 .cat-cell[aria-pressed=true] .ci{color:var(--brand)}
 .cat-cell:active{background:var(--surface-3)}
+.entry-ctx:empty{display:none}
+.entry-ctx{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;margin:8px 0 0;font-size:.875rem;line-height:1.3125rem;font-weight:600;color:var(--text-1)}
+.entry-ctx .icon{width:18px;height:18px;color:var(--brand);flex:none}
+.entry-ctx .link{min-height:44px;padding:0 4px}
+/* 달력 보기 두 칸: 왼쪽도 문서 스크롤 하나(따로 스크롤하지 않음), 오른쪽 선택일 제목은 달력 머리 높이에 맞춤 */
+.list-side.cal-mode{position:static;max-height:none;overflow:visible;overscroll-behavior:auto}
+.cal .cal-c{min-height:max(56px,3.5rem)}
 </style>
 </head>
 <body>

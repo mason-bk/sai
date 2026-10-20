@@ -183,35 +183,37 @@ window.addEventListener('blur', swipeCancel);
 
 /* 달력 좌우 밀기 = 주기 이동(Astra calendar-spec-v23 3절). 날짜 격자에서 손가락 하나로 가로 48px 이상·세로의 1.5배 이상·700ms 안.
    세로 16px 이상 움직이며 가로 우세가 아니면 스크롤에 넘김. 화면 좌우 끝 24px에서 시작하면 브라우저 뒤로 가기 몸짓에 맡김 */
-let cs = null;
+let cs = null, calEatClick = 0;
 function calStart(el, x, y, t) {
   if (x < 24 || x > innerWidth - 24) { cs = null; return; }
   cs = { el, x, y, t, mode: '', dx: 0, dy: 0 };
 }
+function calRelease() { if (cs) { cs.el.style.transition = ''; cs.el.style.transform = ''; } cs = null; }
 function calMove(x, y, ev) {
   if (!cs) return;
   const dx = x - cs.x, dy = y - cs.y;
   cs.dx = dx; cs.dy = dy;
   if (!cs.mode) {
-    if (Math.abs(dx) >= 10 && Math.abs(dx) >= Math.abs(dy) * 1.5) cs.mode = 'h';
-    else if (Math.abs(dy) >= 16 || (Math.abs(dy) >= 10 && Math.abs(dy) > Math.abs(dx))) { cs = null; return; }
+    // 가로 확정은 16px 이상·세로의 1.5배 이상일 때만(세로 스크롤과 덜 겹치게)
+    if (Math.abs(dx) >= 16 && Math.abs(dx) >= Math.abs(dy) * 1.5) cs.mode = 'h';
+    else if (Math.abs(dy) >= 10 && Math.abs(dy) > Math.abs(dx)) { calRelease(); return; }
     else return;
   }
-  if (ev && ev.cancelable) ev.preventDefault();      // 가로로 미는 동안 세로 스크롤 멈춤
+  if (Math.abs(dy) > Math.abs(dx)) { calRelease(); return; } // 가로로 시작했다가 세로로 꺾으면 놓아 줌(이후 이동은 막지 않음)
+  if (ev && ev.cancelable) ev.preventDefault();      // 가로로 미는 동안만 세로 스크롤 멈춤
   const atEnd = dx < 0 && offset >= 0;               // 다음 주기가 없으면 조금만 따라옴
   cs.el.style.transition = 'none';
   cs.el.style.transform = `translate3d(${Math.max(-40, Math.min(40, atEnd ? dx / 5 : dx / 3))}px,0,0)`;
 }
 function calEnd(t) {
   if (!cs) return;
-  const c = cs; cs = null;
-  c.el.style.transition = ''; c.el.style.transform = '';
+  const c = cs; calRelease();
   if (c.mode !== 'h') return;
-  calSwipedAt = Date.now();                          // 뒤따르는 클릭 한 번(다른 날짜 선택) 막음
   if (Math.abs(c.dx) < 48 || Math.abs(c.dx) < Math.abs(c.dy) * 1.5 || t - c.t > 700) return;
+  calEatClick = Date.now();                          // 이동이 확정된 밀기 뒤에 따라오는 클릭 한 번만 먹음
   changeCalendarCycle(c.dx < 0 ? 1 : -1);
 }
-function calCancel() { if (cs) { cs.el.style.transition = ''; cs.el.style.transform = ''; cs = null; } }
+function calCancel() { calRelease(); }
 document.addEventListener('touchstart', e => {
   const el = e.target.closest('.cal-swipe');
   if (el && e.touches.length === 1) { const p = e.touches[0]; calStart(el, p.clientX, p.clientY, e.timeStamp); } else calCancel(); // 두 손가락(확대)은 취소
@@ -312,7 +314,18 @@ function render() {
   renderStatus();
   fitSticky();
   fitRows();
+  alignCalSel();
 }
+// 두 칸 달력: 오른쪽 선택일 제목을 왼쪽 달력 머리 높이에 맞춤(측정값, 고정 숫자 없음)
+function alignCalSel() {
+  const main = $('.list-main'), head = $('.list-side.cal-mode .cal-head');
+  if (!main) return;
+  main.style.paddingTop = '';
+  if (!head || getComputedStyle(main).display === 'contents' || head.getBoundingClientRect().left >= main.getBoundingClientRect().left) return;
+  const gap = head.getBoundingClientRect().top - main.getBoundingClientRect().top;
+  if (gap > 0) main.style.paddingTop = Math.round(gap) + 'px';
+}
+addEventListener('resize', () => alignCalSel());
 const navBtn = (k, label, ic) => `<button data-act="tab" data-v="${k}" ${tab === k ? 'aria-current="page"' : ''}><span class="nav-icon">${icon(ic)}</span><span>${label}</span></button>`;
 const logo = () => `<svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M3 4H7Q9.25 4 11 5.5V20Q9.25 18.5 7 18.5H3Z M5 10V12H9V10Z"/><path d="M13 5.5Q14.75 4 17 4H21V18.5H17Q14.75 18.5 13 20Z M15 10V12H19V10Z"/></svg>`;
 
@@ -373,8 +386,8 @@ function renderStatus() {
   else txt = '';
   const ic = err ? 'alert' : navigator.onLine === false || n ? 'cloud' : st.lastSync ? 'check' : '';
   el.classList.toggle('err', err);
-  // 달력 보기: 정상 공유 상태는 선택일 아래, 오류·대기·오프라인은 달력 위(숨겨서 달력을 올리지 않음)
-  if (el.classList.contains('cal-status')) { const calEl = $('.card.cal'), warn = err || navigator.onLine === false || n > 0; if (calEl && warn && el.nextElementSibling !== calEl) calEl.before(el); else if (!warn && el.nextElementSibling === calEl) { const m = $('.list-main'); if (m) m.appendChild(el); } }
+  // 달력 보기: 정상 공유 상태는 선택일 아래, 오류·대기·오프라인은 달력 위. 위치는 화면을 그릴 때 정하고, 바뀌면 다시 그림
+  if (el.classList.contains('cal-status') && el.classList.contains('warn') !== calWarn()) { setTimeout(render, 0); }
   el.innerHTML = txt ? (ic ? icon(ic) : '') + '<span>' + esc(txt) + '</span>' + (err ? ' <button class="link" data-act="sync">다시 보내기</button>' : '') : '';
 }
 
@@ -641,7 +654,7 @@ function homeView() {
 // 홈 요약의 주기 고르기: 최근 12개 주기와 순지출
 function openPeriodSheet(target) {
   const list = target === 'list', cur = list ? offset : homeOff, nAct = list && lfActive(lf);
-  const items = Array.from({ length: 12 }, (_, i) => { const r = cycleRange(-i); return Object.assign(r, { off: -i, net: core.summarize(list ? core.filterTxs(liveTxs(), lf, r) : liveTxs().filter(t => inRange(t, r))).net }); });
+  const items = Array.from({ length: 12 }, (_, i) => { const r = cycleRange(-i); { const sm = core.summarize(list ? core.filterTxs(liveTxs(), lf, r) : liveTxs().filter(t => inRange(t, r))); return Object.assign(r, { off: -i, net: list && lf.kind === 'refund' ? sm.refund : list && lf.kind === 'transfer' ? sm.transfer : sm.net }); } });
   showSheet(`<div class="sheet-wrap">${sheetHead('집계 주기')}
     <div class="sheet-b"><p class="hint" style="margin-top:12px">카드 결제 주기(매월 ${S.settings.cycle_start_day}일 시작) 기준 집계 기간이에요. 청구액·납부일과는 다를 수 있어요.${nAct ? ' 금액은 지금 적용한 조건 기준이에요.' : ''}</p>
       <div class="card list-card">${items.map(r => `<button class="settings-row" data-act="${list ? 'lpick' : 'hpick'}" data-v="${r.off}" aria-pressed="${r.off === cur}"><span><b>${r.off === 0 ? '이번 주기' : r.off === -1 ? '지난 주기' : r.year + '년'} ${md(r.start)} ~ ${md(r.end)}</b></span><span class="num">${won(r.net)}원</span></button>`).join('')}</div>
@@ -853,7 +866,18 @@ function txRow(t, noDate) {
     <span class="a num ${cls}">${t.type === 'refund' ? '<span class="a-kind">환불</span> +' : ''}${wonWbr(t.amount)}</span></button></div>`;
 }
 
+// 앱을 켜 둔 채 새 주기로 넘어가도 보던 기간을 그대로(offset을 새 오늘로 재해석하지 않음, Astra P1-06). '오늘'·초기화에서만 새 주기
+let shownCycle = null;
+function anchorOffset() {
+  if (lf.period !== 'cycle') { shownCycle = null; return; }
+  if (shownCycle && shownCycle.off === offset && cycleRange(offset).start !== shownCycle.start) {
+    for (let k = 0; k >= -120; k--) if (cycleRange(k).start === shownCycle.start) { offset = k; break; }
+  }
+  shownCycle = { off: offset, start: cycleRange(offset).start };
+}
+const calWarn = () => { const st = store.status(); return !!st.error || navigator.onLine === false || store.pendingCount() > 0; };
 function listView() {
+  anchorOffset();
   const range = listRange(), r = cycleRange(offset);
   const cal = view.list === 'cal' && lf.period === 'cycle';
   if (cal && (!calDay || calDay < r.start || calDay > r.end)) calDay = calDefault(r);
@@ -884,7 +908,7 @@ function listView() {
   const [sumName, sumVal] = lf.kind === 'refund' ? ['환불 합계', s.refund] : lf.kind === 'transfer' ? ['지출 제외 합계', s.transfer] : ['순지출', s.net];
   return `
     <div class="page-title"><h1>내역</h1><button class="link with-icon" data-act="listmenu">가져오기${icon('upload')}</button></div>
-    <div class="list-side" data-ui-key="list-side">
+    <div class="list-side${cal ? ' cal-mode' : ''}" data-ui-key="list-side">
     <div class="search-row" data-ui-key="search-row"><div class="search-box"><input class="in search" type="search" placeholder="기록 검색" value="${esc(lf.q)}" data-input="q" aria-label="기록 검색: 거래처·분류·메모로 찾을 수 있어요" enterkeyhint="search">
       ${lf.q ? `<button class="search-x" data-act="qclear" aria-label="검색어 지우기">${icon('x')}</button>` : ''}</div>
       <button class="icon-btn${chipN ? ' has-n' : ''}" data-act="lfopen" data-v="period" aria-label="기간·분류·결제자·금액 필터${chipN ? `, 조건 ${chipN}개 적용 중` : ''}">${icon('filter')}${chipN ? `<span class="n-badge num" aria-hidden="true">${chipN}</span>` : ''}</button>
@@ -898,10 +922,11 @@ function listView() {
       <span class="rs-n">결과 <b class="num">${s.count}</b>건 · ${sumName}</span><span class="rs-v"><b class="num">${won(sumVal)}원</b></span>${icon('down')}</button></div>
     <p class="sum-line${cal && !lfOpenSum ? ' is-folded' : ''}" id="sum-line" data-ui-key="sum-line"><span>지출 <span class="num">${won(s.expense)}원</span></span><span>환불 <span class="num">${won(s.refund)}원</span></span>${s.transfer || lfOpenSum ? `<span>지출 제외 <span class="num">${won(s.transfer)}원</span></span>` : ''}${lfOpenSum ? '<small class="sum-note">이체·카드대금은 ‘지출 제외’로 기록해요. 순지출에는 더하지 않아요.</small>' : ''}</p>
     ${cal ? '' : '<p class="status state-line" id="status"></p>'}
-    ${cal ? calendar(r, txs, pl) : ''}
+    ${cal && calWarn() ? '<p class="status state-line cal-status warn" id="status"></p>' : ''}
+    ${cal ? calendar(r, txs, pl, chipN > 0 || !!lf.q.trim()) : ''}
     </div>
     <div class="list-main" data-ui-key="list-main">
-    ${cal ? calSelection(all) + '<p class="status state-line cal-status" id="status"></p>' : rows || `<div class="card empty-card"><div class="empty">${nAct ? '<b>조건에 맞는 기록이 없어요</b><br>검색어나 필터를 바꿔보세요.' : '<b>이 주기에 기록이 없어요</b><br>이전 주기를 보거나 새 기록을 남겨보세요.'}</div>${nAct ? '<button class="btn ghost" data-act="lfclear">조건 지우기</button>' : ''}</div>`}
+    ${cal ? calSelection(all, chipN > 0 || !!lf.q.trim()) + (calWarn() ? '' : '<p class="status state-line cal-status" id="status"></p>') : rows || `<div class="card empty-card"><div class="empty">${nAct ? '<b>조건에 맞는 기록이 없어요</b><br>검색어나 필터를 바꿔보세요.' : '<b>이 주기에 기록이 없어요</b><br>이전 주기를 보거나 새 기록을 남겨보세요.'}</div>${nAct ? '<button class="btn ghost" data-act="lfclear">조건 지우기</button>' : ''}</div>`}
     ${!cal && all.length > lfLimit ? `<button class="btn ghost more-btn" data-act="lfmore">${all.length - lfLimit}건 더 보기</button>` : ''}
     </div>`;
 }
@@ -915,7 +940,7 @@ function listMenu() {
 }
 // 달력: 한 결제 주기를 일~토 연속 격자로(두 달로 나누지 않음). 칸 = 그날 순지출(약식), 선택한 날은 아래에 원 단위 내역
 // v23: 주기 이동(화살표·라벨)은 달력 머리에 한 벌만, 좌우로 밀어도 같은 경로(changeCalendarCycle). 주기마다 마지막 선택일을 기억
-let calDay = '', calSwipedAt = 0, calAnim = '';
+let calDay = '', calAnim = '';
 const calPicked = {};                                   // 주기 시작일 → 마지막으로 고른 날짜(이 화면에서만)
 function calDefault(r) { const td = today(); return calPicked[r.start] && calPicked[r.start] >= r.start && calPicked[r.start] <= r.end ? calPicked[r.start] : td >= r.start && td <= r.end ? td : r.end; }
 function changeCalendarCycle(delta) {
@@ -929,42 +954,58 @@ function calLive(msg) { let el = document.getElementById('cal-live'); if (!el) {
 const calTitle = r => offset === 0 ? '이번 카드 주기' : offset === -1 ? '지난 카드 주기' : r.year + '년 카드 주기';
 const calAmt = n => core.shortWon(n); // 칸 금액 약식(실제보다 크게 보이지 않게 내림, core.js)
 const KDAY = ['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'];
-function calendar(r, txs, pl) {
+// 대표 금액: 기본은 순지출(+는 순환불). 종류를 '환불'·'지출 제외'로 고르면 그 합계(Astra P1-03)
+function calMetric(list) {
+  const s = core.summarize(list);
+  if (lf.kind === 'refund') return { v: s.refund, refund: true, label: '환불 합계', short: '+' + calAmt(s.refund), said: `환불 ${won(s.refund)}원` };
+  if (lf.kind === 'transfer') return { v: s.transfer, label: '지출 제외 합계', short: calAmt(s.transfer), said: `지출 제외 ${won(s.transfer)}원` };
+  const n = s.net;
+  return { v: Math.abs(n), refund: n < 0, label: n < 0 ? '순환불' : '순지출', short: n < 0 ? '+' + calAmt(n) : n === 0 ? '0원' : calAmt(n),
+    said: `${n < 0 ? '순환불 ' + won(-n) : '순지출 ' + won(n)}원${s.refund || s.transfer ? ` (지출 ${won(s.expense)}원, 환불 ${won(s.refund)}원${s.transfer ? `, 지출 제외 ${won(s.transfer)}원` : ''})` : ''}` };
+}
+const calLegend = () => lf.kind === 'refund' ? '환불 합계' : lf.kind === 'transfer' ? '지출 제외 합계' : '순지출 · <span class="refund-t">+</span>는 순환불';
+function calendar(r, txs, pl, filtered) {
   const td = today(), byDay = {};
   txs.forEach(t => { (byDay[t.date] = byDay[t.date] || []).push(t); });
   const first = parseDate(r.start), cells = [];
   for (let i = 0; i < first.getDay(); i++) cells.push('<span class="cal-c pad" aria-hidden="true"></span>');
   let zeroDays = 0;
   for (let d = r.start; d <= r.end; d = addDays(d, 1)) {
-    const dt = parseDate(d), list = byDay[d] || [], has = list.length > 0, n = list.reduce((s, t) => s + signed(t), 0), future = d > td;
+    const dt = parseDate(d), list = byDay[d] || [], has = list.length > 0, future = d > td, m = has ? calMetric(list) : null;
     if (!future && !has) zeroDays++;
     const mark = d === r.start || d === r.end || dt.getDate() === 1;
     const label = mark ? `<span class="cal-mo">${dt.getMonth() + 1}/</span>${dt.getDate()}` : dt.getDate();
-    const yr = dt.getMonth() === 0 && dt.getDate() === 1 || d === r.start ? dt.getFullYear() + '년 ' : '';
-    const said = has ? (n < 0 ? `순환불 ${won(-n)}원` : `순지출 ${won(n)}원`) + `, ${list.length}건` : future ? '' : '기록 없음';
-    const name = `${yr}${dt.getMonth() + 1}월 ${dt.getDate()}일 ${KDAY[dt.getDay()]}${d === r.start ? ', 주기 시작' : d === r.end ? ', 주기 끝' : ''}${d === td ? ', 오늘' : ''}${said ? ', ' + said : ''}`;
-    cells.push(`<button class="cal-c${future ? ' fut' : ''}${d === td ? ' today' : ''}${d === calDay ? ' sel' : ''}${dt.getDay() === 0 ? ' sun' : ''}${dt.getDate() === 1 && d !== r.start ? ' m1' : ''}" data-act="calday" data-v="${d}" ${future && !has ? 'disabled' : ''} aria-pressed="${d === calDay}"${d === td ? ' aria-current="date"' : ''} aria-label="${name}">
-      <span class="cal-d">${label}</span>${has ? `<span class="cal-a num${n < 0 ? ' is-refund' : ''}" aria-hidden="true">${n < 0 ? '+' + calAmt(n) : n === 0 ? '0원' : calAmt(n)}</span>` : !future ? '<span class="cal-z" aria-hidden="true">·</span>' : ''}</button>`);
+    const yr = dt.getMonth() === 0 && dt.getDate() === 1 || d === r.start || d === r.end ? dt.getFullYear() + '년 ' : '';
+    const said = has ? `${m.said}, ${list.length}건` : filtered ? '선택 조건에 맞는 기록 없음' : future ? '아직 오지 않은 날' : '기록 없음';
+    const name = `${yr}${dt.getMonth() + 1}월 ${dt.getDate()}일 ${KDAY[dt.getDay()]}${d === r.start ? ', 주기 시작' : d === r.end ? ', 주기 끝' : ''}${d === td ? ', 오늘' : ''}, ${said}`;
+    // 기록 없음 점(·)은 조건이 없을 때 지난 날에만: 조건에 걸러진 날을 '안 적은 날'로 보이지 않게
+    const z = !has && !future && !filtered ? '<span class="cal-z" aria-hidden="true">·</span>' : '';
+    cells.push(`<button class="cal-c${future ? ' fut' : ''}${d === td ? ' today' : ''}${d === calDay ? ' sel' : ''}${dt.getDay() === 0 ? ' sun' : ''}${dt.getDate() === 1 && d !== r.start ? ' m1' : ''}" data-act="calday" data-v="${d}" aria-pressed="${d === calDay}"${d === td ? ' aria-current="date"' : ''} aria-label="${name}">
+      <span class="cal-d">${label}</span>${has ? `<span class="cal-a num${m.refund ? ' is-refund' : ''}" aria-hidden="true">${m.short}</span>` : z}</button>`);
   }
   const anim = calAnim; calAnim = '';
-  const onToday = offset === 0 && calDay === td;
+  const onToday = offset === 0 && calDay === td, y2 = r.start.slice(0, 4) !== r.end.slice(0, 4);
   return `<div class="card cal" data-ui-key="calendar">
     <div class="cal-head" data-ui-key="cal-cycle">
       <button class="cal-nav" data-act="calcyc" data-v="-1" aria-label="이전 주기">${icon('left')}</button>
-      <button class="cal-lbl" data-act="lperiod" aria-haspopup="dialog" aria-label="${calTitle(r)} ${r.year}년 ${md(r.start)}부터 ${md(r.end)}까지. 눌러서 다른 주기 고르기"><b class="num">${r.start.slice(0, 4) !== r.end.slice(0, 4) || r.year !== new Date().getFullYear() ? r.start.slice(0, 4) + '.' : ''}${md(r.start)} ~ ${r.start.slice(0, 4) !== r.end.slice(0, 4) ? r.end.slice(0, 4) + '.' : ''}${md(r.end)}${icon('down')}</b><span>${calTitle(r)}</span></button>
+      <button class="cal-lbl" data-act="lperiod" aria-haspopup="dialog" aria-label="${calTitle(r)} ${r.start.slice(0, 4)}년 ${md(r.start)}부터 ${y2 ? r.end.slice(0, 4) + '년 ' : ''}${md(r.end)}까지. 눌러서 다른 주기 고르기"><b class="num">${y2 || r.year !== new Date().getFullYear() ? r.start.slice(0, 4) + '.' : ''}${md(r.start)} ~ ${y2 ? r.end.slice(0, 4) + '.' : ''}${md(r.end)}${icon('down')}</b><span>${calTitle(r)}</span></button>
       <button class="cal-nav" data-act="calcyc" data-v="1" aria-label="${offset >= 0 ? '다음 주기, 지금이 마지막 주기예요' : '다음 주기'}" ${offset >= 0 ? 'disabled' : ''}>${icon('right')}</button></div>
     <div class="cal-swipe${anim ? ' cal-in' : ''}">
     <div class="cal-g cal-w" aria-hidden="true">${WEEK.map(w => `<span>${w}</span>`).join('')}</div>
     <div class="cal-g">${cells.join('')}</div></div>
-    <div class="cal-foot"><p class="cal-legend">순지출 · <span class="refund-t">+</span>는 순환불 · 금액은 약식${zeroDays ? ` · 기록 없는 날 ${zeroDays}일` : ''}</p>${onToday ? '' : '<button class="link cal-today" data-act="caltoday">오늘</button>'}</div></div>`;
+    <div class="cal-foot"><p class="cal-legend">${filtered ? '선택 조건 · ' : ''}${calLegend()} · 금액은 약식${zeroDays && !filtered ? ` · 기록 없는 날 ${zeroDays}일` : ''}</p>${onToday ? '' : '<button class="link cal-today" data-act="caltoday">오늘</button>'}</div></div>`;
 }
-function calSelection(txs) {
-  const day = calDay, sel = txs.filter(t => t.date === day).sort(byNewest), s = core.summarize(sel), d = parseDate(day), td = today();
+function calSelection(txs, filtered) {
+  const day = calDay, sel = txs.filter(t => t.date === day).sort(byNewest), s = core.summarize(sel), d = parseDate(day), td = today(), future = day > td;
   const rel = day === td ? ' · 오늘' : day === addDays(td, -1) ? ' · 어제' : '';
+  const m = sel.length ? calMetric(sel) : null;
+  const none = filtered ? '선택 조건에 맞는 기록 없음 · 0건' : future ? '아직 오지 않은 날이에요' : '기록 없음';
+  const cta = future ? `<button class="btn ghost sm cal-add" data-act="tab" data-v="recur">${icon('repeat')}<span>정기에서 예정 확인</span></button>`
+    : `<button class="btn ghost sm cal-add" data-act="caladd" data-v="${day}">${icon('plus')}<span>이 날짜에 기록</span></button>`;
   const head = `<div class="cal-sel" data-ui-key="calsel" id="calsel" tabindex="-1">
       <p class="cal-sel-t">${d.getMonth() + 1}월 ${d.getDate()}일 ${KDAY[d.getDay()]}${rel}</p>
-      <div class="cal-sel-row"><p class="cal-sel-v">${sel.length ? `${s.net < 0 ? '순환불' : '순지출'} <b class="num">${won(Math.abs(s.net))}원</b> <span class="cal-sel-n">${sel.length}건</span>` : '<span class="cal-sel-n">기록 없음</span>'}</p>
-        ${day <= td ? `<button class="btn ghost sm cal-add" data-act="caladd" data-v="${day}">${icon('plus')}<span>이 날짜에 기록</span></button>` : ''}</div>
+      <div class="cal-sel-row"><p class="cal-sel-v">${m ? `${m.label} <b class="num">${won(m.v)}원</b> <span class="cal-sel-n">${sel.length}건</span>` : `<span class="cal-sel-n">${none}</span>`}</p>${cta}</div>
+      ${future && sel.length ? '<p class="cal-sel-sub">미래 날짜로 적힌 기록이에요. 날짜가 맞는지 눌러서 확인해 주세요.</p>' : ''}
       ${sel.length && (s.refund || s.transfer) ? `<p class="cal-sel-sub">지출 <span class="num">${won(s.expense)}원</span> · 환불 <span class="num">${won(s.refund)}원</span>${s.transfer ? ` · 지출 제외 <span class="num">${won(s.transfer)}원</span>` : ''}</p>` : ''}</div>`;
   return head + (sel.length ? `<div class="card list-card" data-ui-key="calrows">${sel.map(t => txRow(t, true)).join('')}</div>` : '');
 }
@@ -1212,6 +1253,19 @@ function merchantStats() {
 // 누구 몫은 화면에서 뺐고(v15) 데이터에는 '공동'으로 남긴다
 const defaultBene = () => S.settings.beneficiaries.includes('공동') ? '공동' : S.settings.beneficiaries[0] || '공동';
 function openEntry(id, ctx) {
+  // 선택일에서 새로 기록하려는데 다른 날짜·결제자의 작성 중 기록이 있으면 섞지 않고 고르게 함(Astra P1-01)
+  if (!id && ctx && ctx.date && !ctx.decided && S.draft && S.draft.created_by === S.me && (S.draft.date !== ctx.date || S.draft.payer !== S.me)) {
+    const dr = S.draft, dlg = $('#confirm');
+    const what = [dr.date ? md(dr.date) : '', dr.amountText || (dr.amount ? won(dr.amount) + '원' : ''), dr.merchant].filter(Boolean).map(esc).join(' · ');
+    dlg.setAttribute('aria-labelledby', 'confirm-title');
+    dlg.innerHTML = `<div class="confirm-box" tabindex="-1" autofocus><b id="confirm-title">작성 중인 기록이 있어요</b><p>${what || '저장하지 않은 기록'}</p>
+      <div class="confirm-btns"><button type="button" value="keep" class="btn">이어서 쓰기</button><button type="button" value="new" class="btn ghost">${md(ctx.date)}에 새로 기록</button></div></div>`;
+    dlg.querySelector('[value=keep]').onclick = () => { dlg.close(); openEntry(null, { keepDraft: true }); };
+    dlg.querySelector('[value=new]').onclick = () => { dlg.close(); store.setLocal('draft', null); openEntry(null, { date: ctx.date, decided: true }); };
+    dlg.oncancel = null;
+    dlg.showModal();
+    return;
+  }
   const ex = id && store.get(id);
   editing = !!ex;
   const last = liveTxs().filter(t => t.created_by === S.me).sort((a, b) => b.created_at - a.created_at)[0];
@@ -1222,7 +1276,7 @@ function openEntry(id, ctx) {
     created_by: S.me, created_at: Date.now(), updated_at: 0, deleted: false,
   };
   if (!ex && S.draft && S.draft.created_by === S.me) draft = Object.assign({}, S.draft, { id: uid(), created_at: Date.now() });
-  if (!ex && ctx && ctx.date) draft.date = ctx.date; // 달력 선택일에서 연 기록은 그 날짜(전역 기록 버튼은 오늘)
+  if (!ex && ctx && ctx.date && !(S.draft && S.draft.created_by === S.me && S.draft.date === ctx.date)) { draft.date = ctx.date; draft.payer = S.me; } // 선택일에서 연 새 기록은 그 날짜·내 결제
   saved = false;
   editBase = ex ? editKey(Object.assign({}, ex, { amountText: won(ex.amount) })) : '';
   const dlg = $('#sheet');
@@ -1246,7 +1300,8 @@ function entryHtml(isEdit) {
       <div class="field amount-field"><label for="amount">얼마를 썼나요?</label>
         <div class="amount-in"><input id="amount" name="amount" inputmode="numeric" autocomplete="off" placeholder="0" value="${esc(d.amountText != null ? d.amountText : d.amount ? won(d.amount) : '')}" class="num" aria-describedby="entry-err amount-echo" aria-invalid="${!!d.amountErr && d.amountErr !== 'empty'}"${d.amountErr && d.amountErr !== 'empty' ? ' data-raw="1"' : ''}><span>원</span></div>
         <p class="amount-echo num" id="amount-echo" aria-live="polite">${d.amount >= 10000 ? koWon(d.amount) : ''}</p>
-        <div class="err" id="entry-err" role="alert">${d.amountErr && d.amountErr !== 'empty' ? WON_ERR[d.amountErr] : ''}</div></div>
+        <div class="err" id="entry-err" role="alert">${d.amountErr && d.amountErr !== 'empty' ? WON_ERR[d.amountErr] : ''}</div>
+        <p class="entry-ctx" id="entry-ctx">${ctxLine()}</p></div>
       ${isEdit ? '' : `<div class="chips tool-chips"><button type="button" class="chip" data-act="favlist">${icon('star')}<span>즐겨찾기</span></button><button type="button" class="chip paste-link" data-act="impopen" data-v="paste">${icon('paste')}<span>알림 붙여넣기</span></button></div>`}
       <div class="field"><label for="merchant">거래처 <span class="caption">(선택 입력)</span></label>
         <input id="merchant" name="merchant" class="in" list="mlist" autocomplete="off" placeholder="어디에서 썼나요?" value="${esc(d.merchant)}">
@@ -1281,7 +1336,13 @@ function summaryLine() {
   const d = draft;
   return [d.date === today() ? '오늘' : d.date.slice(0, 4) !== today().slice(0, 4) ? d.date.replace(/-/g, '.') : d.date.slice(5).replace('-', '.'), d.payer + ' 결제', d.method, d.type !== 'expense' ? TYPE_LABEL[d.type] : '', d.refund_pending ? '환불 대기' : ''].filter(Boolean).join(' · ');
 }
-function refreshSummary() { const el = $('.more .sum'); if (el) el.textContent = summaryLine(); }
+function refreshSummary() { const el = $('.more .sum'); if (el) el.textContent = summaryLine(); const c = $('#entry-ctx'); if (c) c.innerHTML = ctxLine(); }
+// 오늘·내 결제가 아닌 기록이면 금액 바로 아래에 날짜·결제자를 보여 줌(선택일·이어 쓰는 초안, Astra V23-07·P1-01)
+function ctxLine() {
+  const d = draft; if (!d || (d.date === today() && d.payer === S.me)) return '';
+  const dt = parseDate(d.date);
+  return `${icon('calendar')}<span>${d.date.slice(0, 4) !== today().slice(0, 4) ? dt.getFullYear() + '년 ' : ''}${dt.getMonth() + 1}월 ${dt.getDate()}일 ${KDAY[dt.getDay()]} · ${esc(d.payer)} 결제</span><button type="button" class="link" data-act="ctxedit">바꾸기</button>`;
+}
 function readEntry(form) {
   const fd = new FormData(form);
   const ar = core.parseWon(fd.get('amount'));
@@ -1809,7 +1870,7 @@ function applyListFilter() {
   if (lf.period !== 'cycle' && view.list === 'cal') view.list = 'rows';
   $('#sheet').close(); render(); scrollTo(0, 0);
 }
-function resetListFilter() { lf = LF0(); offset = 0; lfLimit = 200; calDay = ''; }
+function resetListFilter() { lf = LF0(); offset = 0; shownCycle = null; lfLimit = 200; calDay = ''; }
 let qTimer;
 
 /* ---------------- 이벤트 ---------------- */
@@ -1828,6 +1889,7 @@ document.addEventListener('click', e => {
     case 'analysis': view.analysis = !view.analysis; if (view.analysis && view.mode === 'month') hOff = homeOff; saveView(); render(); break;
     case 'favlist': openFavList(); break;
     case 'favsave': saveFavorite(v); break;
+    case 'ctxedit': { const det = $('#sheet details.more'); if (det) { det.open = true; const c = $('#date'); if (c) { c.scrollIntoView({ block: 'center' }); c.focus({ preventScroll: true }); } } break; }
     case 'morecat': { const det = $('#sheet details.more'); if (det) { det.open = true; const c = $('#cats'); if (c) c.scrollIntoView({ block: 'center' }); } break; }
     /* 설정 */
     case 'theme': store.setLocal('theme', v === 'system' ? null : v); applyTheme(S.theme); render(); break;
@@ -1918,12 +1980,12 @@ document.addEventListener('click', e => {
     case 'rule': openRule(v); break;
     case 'budget': openBudget(); break;
     case 'lmode': view.list = v; saveView(); render(); break;
-    case 'calday': if (Date.now() - calSwipedAt < 350) break; calDay = v; calPicked[cycleRange(offset).start] = v; render(); break;
+    case 'calday': if (calEatClick && Date.now() - calEatClick < 400) { calEatClick = 0; break; } calEatClick = 0; calDay = v; calPicked[cycleRange(offset).start] = v; render(); break;
     case 'calcyc': changeCalendarCycle(Number(v)); break;
-    case 'caltoday': offset = 0; calDay = today(); calAnim = 'fade'; render(); calLive('오늘, ' + md(calDay) + ' 선택'); break;
+    case 'caltoday': offset = 0; shownCycle = null; calDay = today(); calAnim = 'fade'; render(); calLive('오늘, ' + md(calDay) + ' 선택'); break;
     case 'caladd': openEntry(null, { date: v }); break;
     case 'lperiod': openPeriodSheet('list'); break;
-    case 'lpick': offset = Number(v); calDay = calDefault(cycleRange(offset)); $('#sheet').close(); render(); break;
+    case 'lpick': { offset = Number(v); const r = cycleRange(offset); calDay = calDefault(r); $('#sheet').close(); render(); if (view.list === 'cal') calLive(`${calTitle(r)} ${md(r.start)}부터 ${md(r.end)}까지. ${md(calDay)} 선택`); break; }
     case 'rfreq': readRule($('[data-form=rule]')); ruleDraft.freq = v; ruleDraft.day = v === 'week' ? 1 : Math.min(28, new Date().getDate()); $('#sheet').innerHTML = ruleHtml(); break;
     case 'rtoggle': toggleRule(v); break;
     case 'rdelete': deleteRule(); break;
@@ -1969,7 +2031,7 @@ document.addEventListener('input', e => {
 document.addEventListener('compositionend', e => { if (e.target.dataset.input === 'q') { lf.q = e.target.value; clearTimeout(qTimer); qTimer = setTimeout(render, 150); } });
 document.addEventListener('change', e => {
   if (e.target.id === 'merchant') { draft.merchant = e.target.value.trim(); suggestFor(draft.merchant); }
-  if (e.target.closest && e.target.closest('[data-form=entry]')) refreshFavButton();
+  if (e.target.closest && e.target.closest('[data-form=entry]')) { refreshFavButton(); if (['date', 'payer', 'method'].includes(e.target.id)) { readEntry(e.target.form); refreshSummary(); } }
   if (e.target.id === 'imp-file' && e.target.files && e.target.files[0]) loadImportFile(e.target.files[0]);
   const mk = e.target.dataset && e.target.dataset.map;
   if (mk && imp && imp.file) {

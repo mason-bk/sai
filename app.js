@@ -23,7 +23,13 @@ const WEEK = ['일', '월', '화', '수', '목', '금', '토'];
 
 let toastTimer;
 function toast(msg, action, onAction, ms) {
-  const t = $('#toast');
+  // 시트(모달)가 열려 있으면 시트 안의 알림 칸에 띄운다: 모달 뒤에 가려지지 않게. 시트를 다시 그려도 새로 만든다
+  const dlg = $('#sheet');
+  let t = $('#toast');
+  if (dlg.open) {
+    t = dlg.querySelector('.toast.in-sheet');
+    if (!t) { t = document.createElement('div'); t.className = 'toast in-sheet'; t.setAttribute('role', 'status'); t.setAttribute('aria-live', 'polite'); dlg.appendChild(t); }
+  }
   t.textContent = msg;
   t.classList.toggle('act', !!action);
   if (action) {
@@ -33,7 +39,10 @@ function toast(msg, action, onAction, ms) {
     t.appendChild(b);
   }
   t.classList.add('on');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), ms || (action ? 8000 : 2600));
+  const dur = ms || (action ? 8000 : 4000);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), dur);
+  t.onpointerenter = t.onfocusin = () => clearTimeout(toastTimer);
+  t.onpointerleave = t.onfocusout = () => { clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), 2500); };
 }
 
 /* ---------------- 삭제: 확인 창 + 되돌리기 ---------------- */
@@ -350,7 +359,7 @@ function unitLabel(unit, off, r) {
     return { title: off === 0 ? '오늘' : off === -1 ? '어제' : (d.getMonth() + 1) + '월 ' + d.getDate() + '일', range: md(r.start) + ' (' + WEEK[d.getDay()] + ')' };
   }
   if (unit === 'week') return { title: off === 0 ? '이번 주' : off === -1 ? '지난주' : -off + '주 전', range: md(r.start) + ' - ' + md(r.end) };
-  return { title: off === 0 ? '이번 달' : off === -1 ? '지난달' : parseDate(r.start).getFullYear() + '년 ' + (parseDate(r.start).getMonth() + 1) + '월', range: md(r.start) + ' - ' + md(r.end) };
+  return { title: off === 0 ? '이번 주기' : off === -1 ? '지난 주기' : parseDate(r.start).getFullYear() + '년 ' + (parseDate(r.start).getMonth() + 1) + '월 주기', range: md(r.start) + ' ~ ' + md(r.end) };
 }
 
 function periodRange() {
@@ -394,8 +403,8 @@ function analysisView() {
   const elapsed = running ? dayDiff(r.start, td) + 1 : spanDays;
   const avg = elapsed > 0 ? total / elapsed : 0;
   const cmpName = r.custom ? '이전 같은 기간'
-    : hOff === 0 ? { day: '어제', week: '지난주', month: '지난달' }[r.unit]
-    : { day: '그 전날', week: '그 전 주', month: '그 전 달' }[r.unit];
+    : hOff === 0 ? { day: '어제', week: '지난주', month: '지난 주기' }[r.unit]
+    : { day: '그 전날', week: '그 전 주', month: '그 전 주기' }[r.unit];
   const diff = total - prevTotal;
   const filtered = view.cats.length + view.payers.length;
 
@@ -404,8 +413,8 @@ function analysisView() {
     const proj = Math.round(avg * spanDays);
     const prevSame = sum(prevTxs.filter(t => dayDiff(pr.start, t.date) < elapsed));
     const d2 = total - prevSame;
-    pace = `<div class="pace" aria-label="이번 달 예상과 지난달 같은 시점 비교"><span>예상 <b class="num">약 ${man(proj)}원</b></span>` +
-      (prevTxs.length ? `<span>지난달 이맘때 <b class="num">${d2 >= 0 ? '+' : '−'}${man(Math.abs(d2))}원</b></span>` : '') + `</div>`;
+    pace = `<div class="pace" aria-label="이번 주기 예상과 지난 주기 같은 시점 비교"><span>예상 <b class="num">약 ${man(proj)}원</b></span>` +
+      (prevTxs.length ? `<span>지난 주기 이맘때 <b class="num">${d2 >= 0 ? '+' : '−'}${man(Math.abs(d2))}원</b></span>` : '') + `</div>`;
   }
 
   const periods = `<div class="seg seg4" role="group" aria-label="기간">${MODES.map(([k, l]) => `<button data-act="vmode" data-v="${k}" aria-pressed="${view.mode === k}">${l}</button>`).join('')}</div>`;
@@ -463,7 +472,7 @@ function homeView() {
       <div class="spread caption"><span>예산 ${man(b.total)}원</span><span>${rest < 0 ? `<b class="over-t">${won(-rest)}원 넘었어요</b>` : `남은 돈 <b>${won(rest)}원</b>${running && left > 0 ? ` · 하루 ${won(Math.floor(rest / left))}원` : ''}`}</span></div>` : '';
   const cats = groupSum(txs.filter(t => t.type !== 'transfer'), t => t.category || '미분류').filter(([, v]) => v > 0);
   const recent = txs.slice().sort(byNewest).slice(0, 3);
-  const anyTx = liveTxs().length > 0;
+  const anyTx = liveTxs().length > 0, pendingRefunds = liveTxs().filter(t => t.refund_pending).length;
   return `
     <section data-ui-key="hero" class="card hero home-hero" aria-label="주기 요약">
       <div class="hero-top"><button class="period-btn" data-act="hperiod" aria-label="집계 주기 바꾸기">${r.year}년 ${md(r.start)} ~ ${md(r.end)}${icon('down')}</button>
@@ -478,8 +487,9 @@ function homeView() {
       <button data-act="impopen" data-v="paste">${icon('paste')}<span>카드 알림 붙여넣기</span></button>
       <button data-act="favlist">${icon('star')}<span>즐겨찾기로 기록</span></button>
     </div>
+    ${pendingRefunds ? `<button class="refund-line" data-act="refunds" data-ui-key="refund-line">${icon('alert')}<span>환불 대기 <b>${pendingRefunds}건</b> · 전체 기간</span>${icon('right')}</button>` : ''}
     <div class="section-head" data-ui-key="recent-h"><h2>최근 기록</h2>${txs.length ? `<button class="link" data-act="homelist">모두 보기${icon('right')}</button>` : ''}</div>
-    <div class="card list-card recent" data-ui-key="recent">${recent.length ? recent.map(txRow).join('')
+    <div class="card list-card recent" data-ui-key="recent">${recent.length ? recent.map(t => txRow(t)).join('')
       : `<div class="empty">${anyTx ? '이 주기에는 기록이 없어요.' : '<b>첫 기록을 남겨보세요</b><br>금액만 입력해도 괜찮아요.'}</div>${anyTx ? '' : '<button class="btn" data-act="add">지출 기록</button>'}`}</div>
     <div class="section-head" data-ui-key="cats-h"><h2>어디에 썼나요?</h2><span class="caption">같은 주기 기준</span></div>
     <div class="card" data-ui-key="home-cats">${cats.length ? cats.slice(0, 3).map(([c, v]) => {
@@ -524,7 +534,7 @@ function budgetBlock(r, total, running, elapsed, spanDays) {
     return `<div class="bar-row"><div class="bar-top"><span>${esc(c)}</span><span class="num">${won(spent)} / ${won(v)}원</span></div>${bar(spent, v)}<div class="budget-line">${line(spent, v)}</div></div>`;
   }).join('');
   return `<section class="card budget" data-ui-key="budget" aria-label="예산">
-    <div class="budget-h"><b>${hOff === 0 ? '이번 달' : '그 달'} 예산</b><button class="link" data-act="budget">수정</button></div>
+    <div class="budget-h"><b>${hOff === 0 ? '이번 주기' : '그 주기'} 예산</b><button class="link" data-act="budget">수정</button></div>
     ${b.total ? `<div class="bar-row"><div class="bar-top"><span class="num">${won(total)} / ${won(b.total)}원</span><span class="pct num">${Math.round(Math.max(0, total) / b.total * 100)}%</span></div>${bar(total, b.total)}<div class="budget-line">${line(total, b.total)}</div></div>` : ''}
     ${catRows}
     ${running && spanDays > 1 ? '<p class="hint" style="margin:6px 0 8px">세로선은 오늘까지 지난 날의 비율이에요.</p>' : ''}
@@ -597,7 +607,7 @@ function paceChart(r, pr, txs, prevTxs, upto) {
   const pts = Array.from({ length: D }, (_, i) => ({ x: x(i), label: `${i + 1}일째 (${md(addDays(r.start, i))})`, a: cur[i], b: prev[i] }));
   return `<h2 data-ui-key="pace-title">누적 지출 흐름</h2>
   <div class="card chart-card" data-ui-key="pace-chart">
-    <div class="legend"><span><i class="key" style="background:var(--accent)"></i>${hOff === 0 ? '이번 달' : '선택한 달'}</span>${prev.length ? `<span><i class="key" style="background:var(--prev)"></i>${hOff === 0 ? '지난달' : '그 전달'}</span>` : ''}</div>
+    <div class="legend"><span><i class="key" style="background:var(--accent)"></i>${hOff === 0 ? '이번 주기' : '선택한 주기'}</span>${prev.length ? `<span><i class="key" style="background:var(--prev)"></i>${hOff === 0 ? '지난 주기' : '그 전 주기'}</span>` : ''}</div>
     <div class="chart" data-pts='${esc(JSON.stringify(pts))}' data-w="${W}">
     <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="이번 달 누적 ${won(cur[last] || 0)}원${prev.length ? ', 지난달 최종 ' + won(prev[prev.length - 1]) + '원' : ''}">
       ${ticks.map(v => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" class="grid"/><text x="${L - 6}" y="${y(v) + 4}" class="axis" text-anchor="end">${man(v)}</text>`).join('')}
@@ -688,13 +698,13 @@ function filterSheet(kind) {
   dlg.showModal();
 }
 
-function txRow(t) {
+function txRow(t, noDate) {
   const cls = t.type === 'refund' ? 'ref' : t.type === 'transfer' ? 'ex' : '';
   const d = parseDate(t.date);
   return `<div class="swipe" data-id="${esc(t.id)}"><button class="swipe-del" data-act="askdel" data-v="${esc(t.id)}" tabindex="-1" aria-label="삭제">삭제</button><button class="tx" data-act="edit" data-v="${esc(t.id)}">
     <span class="ic" aria-hidden="true">${categoryIcon(t.category)}</span>
     <span class="mid"><span class="m">${esc(t.merchant || t.category || '기록한 지출')}</span>
-      <span class="meta">${d.getMonth() + 1}.${d.getDate()} · ${esc(t.category || '미분류')} · ${esc(t.payer || '공동')} 결제
+      <span class="meta">${noDate ? '' : `${d.getMonth() + 1}.${d.getDate()} · `}${esc(t.category || '미분류')} · ${esc(t.payer || '공동')} 결제
       ${t.refund_pending ? '<span class="tag">환불 대기</span>' : ''}${t.type === 'transfer' ? '<span class="tag q">지출 제외</span>' : ''}${t.created_by === '정기' ? '<span class="tag q">정기</span>' : ''}${store.isPending(t.id) ? '<span class="tag q">공유 대기</span>' : ''}</span></span>
     <span class="a num ${cls}">${t.type === 'refund' ? '<span class="refund-label">환불</span>+' : ''}${won(t.amount)}원</span></button></div>`;
 }
@@ -714,7 +724,7 @@ function listView() {
       rows += `<p class="day" data-ui-key="day-${t.date}">${d.getFullYear() !== new Date().getFullYear() ? d.getFullYear() + '년 ' : ''}${d.getMonth() + 1}.${d.getDate()}${rel}</p><div class="card list-card" data-ui-key="rows-${t.date}">`;
       lastDay = t.date;
     }
-    rows += txRow(t);
+    rows += txRow(t, true);
   });
   if (rows) rows += '</div>';
   const pl = lf.period === 'all' ? ['전체 기간', ''] : lf.period === 'custom' && range ? ['지정 기간', md(range.start) + ' ~ ' + md(range.end)] : [offset === 0 ? '이번 주기' : r.year + '년', md(r.start) + ' ~ ' + md(r.end)];
@@ -726,14 +736,15 @@ function listView() {
   const [sumName, sumVal] = lf.kind === 'refund' ? ['환불 합계', s.refund] : lf.kind === 'transfer' ? ['지출 제외 합계', s.transfer] : ['순지출', s.net];
   return `
     <div class="page-title"><h1>내역</h1><button class="link with-icon" data-act="listmenu">가져오기${icon('upload')}</button></div>
-    <div class="period-nav" data-ui-key="list-cycle">
-      <button data-act="cyc" data-v="-1" aria-label="이전 주기" ${lf.period !== 'cycle' ? 'disabled' : ''}>${icon('left')}</button>
-      <button class="period-lbl" data-act="lfopen" data-v="period" aria-label="기간 바꾸기"><b>${pl[0]}</b><span>${pl[1]}</span></button>
-      <button data-act="cyc" data-v="1" aria-label="다음 주기" ${lf.period !== 'cycle' || offset >= 0 ? 'disabled' : ''}>${icon('right')}</button></div>
+
     <div class="search-row" data-ui-key="search-row"><div class="search-box"><input class="in search" type="search" placeholder="거래처, 분류, 메모 검색" value="${esc(lf.q)}" data-input="q" aria-label="거래처, 분류, 메모 검색" enterkeyhint="search">
       ${lf.q ? `<button class="search-x" data-act="qclear" aria-label="검색어 지우기">${icon('x')}</button>` : ''}</div>
       <button class="icon-btn" data-act="lfopen" data-v="period" aria-label="기간·분류·결제자·금액 필터">${icon('filter')}</button>
       ${lf.period === 'cycle' ? `<button class="icon-btn" data-act="lmode" data-v="${cal ? 'rows' : 'cal'}" aria-pressed="${cal}" aria-label="${cal ? '목록으로 보기' : '달력으로 보기'}">${icon(cal ? 'ledger' : 'calendar')}</button>` : ''}</div>
+    <div class="period-nav" data-ui-key="list-cycle">
+      <button data-act="cyc" data-v="-1" aria-label="이전 주기" ${lf.period !== 'cycle' ? 'disabled' : ''}>${icon('left')}</button>
+      <button class="period-lbl" data-act="lfopen" data-v="period" aria-label="기간 바꾸기"><b>${pl[0]}</b><span>${pl[1]}</span></button>
+      <button data-act="cyc" data-v="1" aria-label="다음 주기" ${lf.period !== 'cycle' || offset >= 0 ? 'disabled' : ''}>${icon('right')}</button></div>
     <div class="filter-toolbar" data-ui-key="lf-toolbar"><div class="filters" role="group" aria-label="내역 필터">${chips}</div>${nAct ? '<button class="link lf-reset" data-act="lfclear">초기화</button>' : ''}</div>
     <div class="results-sticky" data-ui-key="lf-sum"><button class="rs-main" data-act="lfsum" aria-expanded="${lfOpenSum}" aria-label="결과 ${s.count}건, ${sumName} ${won(sumVal)}원. 눌러서 자세히">
       <span class="rs-n">결과 <b class="num">${s.count}</b>건 · ${sumName}</span><span class="rs-v"><b class="num">${won(sumVal)}원</b></span>${icon('down')}</button></div>
@@ -775,7 +786,7 @@ function calendar(r, txs) {
     <div class="cal-g cal-w">${WEEK.map(w => `<span>${w}</span>`).join('')}</div>
     <div class="cal-g">${cells.join('')}</div>
     <p class="cal-legend"><span>지출한 날 ${spendDays}일</span><span><i class="cal-z"></i> 지출 없는 날 ${zeroDays}일</span></p></div>
-    ${calDay ? `<p class="day" data-ui-key="calsel">${md(calDay)} ${WEEK[parseDate(calDay).getDay()]}요일${sel ? ` · ${sel.length}건 · 순지출 ${won(sum(sel))}원` : ''}</p>${sel ? `<div class="card" data-ui-key="calrows">${sel.map(txRow).join('')}</div>` : '<div class="card"><div class="empty">이날은 지출이 없어요.</div></div>'}`
+    ${calDay ? `<p class="day" data-ui-key="calsel">${md(calDay)} ${WEEK[parseDate(calDay).getDay()]}요일${sel ? ` · ${sel.length}건 · 순지출 ${won(sum(sel))}원` : ''}</p>${sel ? `<div class="card" data-ui-key="calrows">${sel.map(t => txRow(t, true)).join('')}</div>` : '<div class="card"><div class="empty">이날은 지출이 없어요.</div></div>'}`
       : '<p class="hint" style="text-align:center">날짜를 누르면 그날 기록을 보여줘요.</p>'}`;
 }
 
@@ -885,17 +896,16 @@ function recurView() {
     <section class="card rules-summary" data-ui-key="rules-sum"><p class="eyebrow">이번 주기에 더 나갈 돈 <span class="caption">${md(today())} ~ ${md(r.end)}</span></p>
       <div class="amt num">${won(up.reduce((a, u) => a + u.rule.amount, 0))}<small>원</small></div>
       <p class="meta">예정 ${up.length}건 · 아직 지출에 더하지 않았어요${monthly ? ` · 매월 고정 ${won(monthly)}원` : ''}</p></section>
-    <p class="hint lead-hint2">대출·통신비·보험처럼 정해진 날 나가는 돈을 등록하면 그날 자동으로 기록돼요. 금액이 달라지면 그 기록만 고치면 돼요.</p>
     ${list.length ? `<div class="section-head"><h2>다가오는 순서</h2></div><div class="card list-card" data-ui-key="rules">${sorted.map(x => {
       const nx = x.active ? nextDate(x) : '';
       return `<div class="rule${x.active ? '' : ' off'}"><button class="tx" data-act="rule" data-v="${esc(x.id)}">
         <span class="ic" aria-hidden="true">${categoryIcon(x.category)}</span>
         <span class="mid"><span class="m">${esc(x.name)}</span>
-          <span class="meta">${ruleWhen(x)} · ${esc(x.payer || '-')} 결제${x.active ? (nx ? ' · 다음 ' + Number(nx.slice(5, 7)) + '.' + Number(nx.slice(8)) : ' · 종료') : ''}</span></span>
+          <span class="meta">${ruleWhen(x)} · ${esc(x.payer || '-')} 결제${x.active ? (nx ? ' · 다음 ' + Number(nx.slice(5, 7)) + '.' + Number(nx.slice(8)) : ' · 종료') : ' · <b class="off-t">자동 기록 꺼짐</b>'}</span></span>
         <span class="a num">${won(x.amount)}원</span></button>
         <label class="rule-sw"><input type="checkbox" data-act="rtoggle" data-v="${esc(x.id)}" ${x.active ? 'checked' : ''} aria-label="${esc(x.name)} 자동 기록"><span class="sw-t">${x.active ? '켜짐' : '꺼짐'}</span></label></div>`;
     }).join('')}</div>` : `<div class="card"><div class="empty">등록한 정기 지출이 없어요.</div><button class="btn" data-act="rule">정기 지출 추가</button></div>`}
-    <p class="notice">자동 기록은 정한 날 한 번만 추가돼요. 지운 기록은 다시 만들지 않아요.</p>`;
+    <p class="notice">대출·통신비·보험처럼 정해진 날 나가는 돈을 등록하면 그날 한 번 자동으로 기록돼요. 금액이 달라지면 그 기록만 고치면 되고, 지운 기록은 다시 만들지 않아요.</p>`;
 }
 let ruleDraft = null;
 function openRule(id) {
@@ -940,7 +950,7 @@ function ruleHtml() {
     <div class="sheet-footer"><button class="btn save" type="submit">저장</button></div></form>`;
 }
 function putRules(list, extra) {
-  store.saveSettings(Object.assign({}, extra || {}, { recurring: list }));
+  return store.saveSettings(Object.assign({}, extra || {}, { recurring: list }));
 }
 function readRule(f) {
   const fd = new FormData(f), d = ruleDraft;
@@ -962,18 +972,18 @@ function saveRule(f) {
   const old = (rules() || []).findIndex(r => r.id === d.id);
   list.splice(old < 0 ? list.length : old, 0, d);
   const extra = d.category && !S.settings.categories.includes(d.category) ? { categories: S.settings.categories.concat(d.category) } : null;
+  if (!putRules(list, extra)) { d.isNew = isNew; return err('기기에 저장하지 못했어요. 입력은 그대로 두었어요'); }
   $('#sheet').close();
-  putRules(list, extra);
   toast(isNew ? '정기 지출을 등록했어요' : '정기 지출을 고쳤어요');
 }
 function toggleRule(id) {
-  putRules((rules() || []).map(r => r.id === id ? Object.assign({}, r, { active: !r.active }) : r));
+  if (!putRules((rules() || []).map(r => r.id === id ? Object.assign({}, r, { active: !r.active }) : r))) { render(); toast('기기에 저장하지 못했어요'); }
 }
 function deleteRule() {
   if (!confirm('이 정기 지출을 삭제할까요? 이미 기록된 지출은 남아요.')) return;
   const id = ruleDraft.id;
+  if (!putRules((rules() || []).filter(r => r.id !== id))) { $('#rule-err').textContent = '기기에 저장하지 못했어요'; return; }
   $('#sheet').close();
-  putRules((rules() || []).filter(r => r.id !== id));
   toast('삭제했어요');
 }
 
@@ -1031,7 +1041,7 @@ function entryHtml(isEdit) {
         ${top.length ? `<div class="chips recent-chips">${top.map(m => `<button type="button" class="chip" data-act="merchant" data-v="${esc(m)}" aria-pressed="${d.merchant === m}">${esc(m)}</button>`).join('')}</div>` : ''}</div>
       <div class="cat-line"><span id="cat-label">${catLabel()}</span><button type="button" class="link" data-act="morecat">변경</button></div>
       <details class="more" ${isEdit || d.type !== 'expense' || d.refund_pending || d.note ? 'open' : ''}>
-      <summary><span class="sum">${esc(summaryLine())}</span>${icon('down')}</summary>
+      <summary><span class="sum-wrap"><span class="sum-lab">날짜·결제자·결제수단·종류·메모</span><span class="sum">${esc(summaryLine())}</span></span>${icon('down')}</summary>
       <div class="field"><span class="lab">분류</span><div class="chips" id="cats">${cats.map(c => `<button type="button" class="chip" data-act="cat" data-v="${esc(c)}" aria-pressed="${d.category === c}">${esc(c)}</button>`).join('')}</div></div>
       <div class="row2">
         <div class="field"><label for="date">날짜</label><input id="date" name="date" type="date" class="in" value="${esc(d.date)}" max="${today()}"></div>
@@ -1094,9 +1104,20 @@ function showSheet(html, compact) {
 }
 // 시트 안 내용만 다시 그린다(본문 스크롤 위치 유지)
 function repaintSheet(html) {
-  const b = $('#sheet .sheet-b'), y = b ? b.scrollTop : 0;
-  $('#sheet').innerHTML = html;
+  const dlg = $('#sheet'), b = $('#sheet .sheet-b'), y = b ? b.scrollTop : 0;
+  const a = document.activeElement, aid = a && dlg.contains(a) ? a.id || (a.dataset && (a.dataset.act ? 'act:' + a.dataset.act + ':' + (a.dataset.v || '') : a.dataset.map ? 'map:' + a.dataset.map : a.dataset.input ? 'input:' + a.dataset.input : '')) : '';
+  const sel = a && typeof a.selectionStart === 'number' ? [a.selectionStart, a.selectionEnd] : null;
+  const open = [...dlg.querySelectorAll('details')].map((d, i) => d.open ? (d.dataset.k || i) : null).filter(x => x !== null);
+  const t = dlg.querySelector('.toast.in-sheet');
+  dlg.innerHTML = html;
+  if (t) dlg.appendChild(t);
+  [...dlg.querySelectorAll('details')].forEach((d, i) => { if (open.includes(d.dataset.k || i)) d.open = true; });
   const nb = $('#sheet .sheet-b'); if (nb) nb.scrollTop = y;
+  if (aid) {
+    const [kind, k1, k2] = aid.split(':');
+    const el = kind === 'act' ? dlg.querySelector(`[data-act="${k1}"][data-v="${k2}"]`) || dlg.querySelector(`[data-act="${k1}"]`) : kind === 'map' ? dlg.querySelector(`[data-map="${k1}"]`) : kind === 'input' ? dlg.querySelector(`[data-input="${k1}"]`) : dlg.querySelector('#' + CSS.escape(aid));
+    if (el) { el.focus({ preventScroll: true }); if (sel && typeof el.setSelectionRange === 'function') try { el.setSelectionRange(sel[0], sel[1]); } catch (e) {} }
+  }
 }
 const lastMethod = () => {
   const last = liveTxs().filter(t => t.created_by === S.me).sort((a, b) => b.created_at - a.created_at)[0];
@@ -1122,7 +1143,7 @@ function addFavorite() {
   if (list.length >= FAV_MAX) { msg.textContent = `즐겨찾기는 ${FAV_MAX}개까지예요. 설정에서 정리해 주세요`; return; }
   if (!store.setPrefs({ favorites: list.concat(fav) })) { msg.textContent = '즐겨찾기를 저장하지 못했어요'; return; }
   const b = $('[data-act=favadd]'); if (b) { b.outerHTML = favButton(); }
-  $('#fav-msg').textContent = '즐겨찾기에 넣었어요. 두 사람의 기록 화면 맨 위에 별표로 보여요';
+  $('#fav-msg').textContent = '즐겨찾기에 넣었어요. 홈·기록 화면의 즐겨찾기에서 바로 기록할 수 있어요';
 }
 function removeFavorite(id, silent) {
   const list = favorites(), gone = list.find(f => f.id === id);
@@ -1152,17 +1173,25 @@ function openFavList() {
   showSheet(`<div class="sheet-wrap">${sheetHead('즐겨찾기로 기록')}
     <div class="sheet-b">
       <p class="hint fav-lead">누르면 오늘 기록으로 바로 저장해요. 결제자와 금액을 먼저 확인해 주세요.</p>
-      ${!store.prefs() ? '<div class="empty">서버 업데이트가 필요해요 (Apps Script 새 버전).</div>' : list.length ? `<div class="favorites">${list.map(f => `<button class="favorite" data-act="favsave" data-v="${esc(f.id)}"><span><b>${esc(f.merchant)}</b><span class="meta">${esc(f.category || '미분류')} · ${esc(f.payer || S.me)} 결제</span></span><span class="fav-amt num">${won(f.amount)}원${icon('plus')}</span></button>`).join('')}</div>`
+      ${!store.prefs() ? '<div class="empty">서버 업데이트가 필요해요 (Apps Script 새 버전).</div>' : list.length ? `<div class="favorites">${list.map(f => { const r = favRecord(f); return `<button class="favorite" data-act="favsave" data-v="${esc(f.id)}" aria-label="${esc(f.merchant)} ${won(f.amount)}원 오늘 기록"><span><b>${esc(f.merchant)}</b><span class="meta">${esc(r.category || '미분류')} · ${esc(r.payer)} 결제 · ${esc(r.method)}${r.payer !== f.payer ? ' <span class="caption">(결제자 목록에 없어 ' + esc(r.payer) + ')</span>' : ''}</span></span><span class="fav-amt num">${won(f.amount)}원${icon('plus')}</span></button>`; }).join('')}</div>`
         : '<div class="empty"><b>즐겨찾기가 아직 없어요</b><br>자주 쓰는 기록을 열고 "즐겨찾기에 추가"를 눌러 보세요.</div>'}
     </div>
-    <div class="sheet-footer two"><button type="button" class="btn ghost" data-act="favmanage">편집</button><button type="button" class="btn ghost" data-act="add">직접 금액 입력</button></div></div>`);
+    <div class="sheet-footer two"><button type="button" class="btn ghost" data-act="favmanage">편집</button><button type="button" class="btn ghost" data-act="add">직접 금액 입력</button></div></div>`, true);
+}
+// 즐겨찾기로 실제 저장될 값(목록에 보이는 값과 같게)
+function favRecord(f) {
+  return {
+    method: S.settings.methods.includes(f.method) ? f.method : lastMethod(),
+    category: S.settings.categories.includes(f.category) ? f.category : (f.category || ''),
+    payer: payerList().includes(f.payer) ? f.payer : S.me,
+  };
 }
 function saveFavorite(id) {
   const f = favorites().find(x => x.id === id); if (!f) return;
+  const fr = favRecord(f);
   const rec = {
     id: uid(), date: today(), merchant: f.merchant, amount: f.amount, type: 'expense',
-    method: S.settings.methods.includes(f.method) ? f.method : lastMethod(), category: S.settings.categories.includes(f.category) ? f.category : (f.category || ''),
-    payer: payerList().includes(f.payer) ? f.payer : S.me, beneficiary: defaultBene(), note: '', refund_pending: false,
+    method: fr.method, category: fr.category, payer: fr.payer, beneficiary: defaultBene(), note: '', refund_pending: false,
     created_by: S.me, created_at: Date.now(), updated_at: 0, deleted: false,
   };
   if (!store.upsert(rec)) return;
@@ -1217,12 +1246,12 @@ function importHtml() {
   const st = imp.step;
   if (st === 'paste') return `<form data-form="paste" class="sheet-wrap" novalidate>${impHead('알림 붙여넣기', false)}
     <div class="sheet-b">
-      <p class="lead-hint">카드 문자나 카드 앱 알림을 <b>여러 개 한 번에</b> 붙여넣으세요. 날짜·금액·가맹점을 읽어 목록으로 보여드려요.</p>
-      <textarea id="paste-text" class="in paste-in" rows="9" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="카드 알림 붙여넣기" placeholder="예)\n가나카드 승인 12,300원\n10/18 12:34 스타벅스\n\n취소 문자도 함께 넣으면 환불로 기록해요">${esc(imp.text)}</textarea>
-      <div class="err" id="imp-err" role="alert">${esc(imp.err)}</div>
-      <button class="btn" type="submit">내역 확인</button>
+      <p class="lead-hint">카드 문자나 카드 앱 알림을 <b>여러 개 한 번에</b> 붙여넣으세요. 확인한 기록만 장부에 넣어요.</p>
+      <label class="lab-strong" for="paste-text">카드 알림 원문</label>
+      <textarea id="paste-text" class="in paste-in" rows="9" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="예)\n가나카드 승인 12,300원\n10/18 12:34 스타벅스\n\n취소 문자도 함께 넣으면 환불로 기록해요">${esc(imp.text)}</textarea>
       <p class="hint">글은 이 기기 안에서만 읽고 어디에도 보내지 않아요.</p>
-    </div></form>`;
+    </div>
+    <div class="sheet-footer"><div class="err" id="imp-err" role="alert">${esc(imp.err)}</div><button class="btn" type="submit">확인 목록 보기</button></div></form>`;
   if (st === 'file') return `<div class="sheet-wrap">${impHead('빠진 기록 가져오기', false)}
     <div class="sheet-b">
       <p class="lead-hint">카드사 이용내역이나 다른 가계부에서 내려받은 <b>CSV·엑셀 파일</b>을 골라 주세요. 이미 적은 기록과 대조해 빠진 것만 골라 드려요.</p>
@@ -1301,13 +1330,13 @@ function mapHtml() {
       ${isCsv ? `<p class="hint enc-line">글자가 깨졌나요? <button type="button" class="link" data-act="impenc">${f.enc === 'euc-kr' ? '자동으로 다시 읽기' : '한국어(EUC-KR)로 다시 읽기'}</button></p>` : ''}
       <h2 class="map-h">어떤 열인지 확인해 주세요</h2>
       <div class="column-map">${ROLES.slice(0, 3).map(sel).join('')}</div>
-      <details class="more"><summary>더 연결하기 <span class="sum">시각·종류·통화·분류·결제자·메모</span></summary><div class="column-map">${ROLES.slice(3).map(sel).join('')}</div></details>
-      ${conv && conv.negatives ? `<div class="field neg-field${needNeg ? ' need' : ''}"><span class="lab">음수 금액이 ${conv.negatives}줄 있어요. 어떻게 가져올까요?</span><div class="seg">${[['refund', '환불'], ['expense', '지출'], ['skip', '건너뛰기']].map(([k, l]) => `<button type="button" data-act="impneg" data-v="${k}" aria-pressed="${f.negative === k}">${l}${conv.negSuggested === k ? ' <small>추천</small>' : ''}</button>`).join('')}</div>
-        <p class="hint">카드 이용내역의 음수는 보통 취소(환불), 다른 가계부는 보통 지출이에요.</p></div>` : ''}
       <h2 class="map-h">미리보기 <span class="h2sub">앞쪽 원본 3줄</span></h2>
       <div class="card file-preview">${pv.map(({ r, it, why }) => `<div class="pv-row"><span class="pv-src">${esc(r.filter(v => v !== '' && v != null).join(' · ').slice(0, 70))}</span>
         ${it ? `<span class="pv-out"><span>→ ${it.date.slice(0, 4) !== String(new Date().getFullYear()) ? it.date.slice(0, 4) + '.' : ''}${md(it.date)}${it.time ? ' ' + it.time : ''} · ${esc(it.merchant || '거래처 없음')}</span><b class="num${it.type === 'refund' ? ' ref' : ''}">${it.type === 'refund' ? '환불 ' : it.type === 'transfer' ? '제외 ' : ''}${it.amount ? won(it.amount) + '원' : esc(it.foreign || '금액 없음')}</b></span>` : `<span class="pv-out pv-bad">→ ${esc(why || (f.mapping.date < 0 ? '날짜 열을 골라 주세요' : f.mapping.amount < 0 ? '금액 열을 골라 주세요' : '이 줄은 건너뛰어요'))}</span>`}</div>`).join('') || '<div class="empty">내용이 없어요</div>'}</div>
       ${conv ? `<p class="hint">${conv.items.length}건 읽음${conv.unread.length ? ` · ${conv.unread.length}줄은 가져올 수 없어요(다음 화면에서 이유 확인)` : ''}</p>` : ''}
+      <details class="more map-more" data-k="map-more"><summary><span class="sum-wrap"><span class="sum-lab">더 연결하기</span><span class="sum">시각·종류·통화·분류·결제자·결제수단·메모·할부</span></span>${icon('down')}</summary><div class="column-map">${ROLES.slice(3).map(sel).join('')}</div></details>
+      ${conv && conv.negatives ? `<div class="field neg-field${needNeg ? ' need' : ''}"><span class="lab">음수 금액이 ${conv.negatives}줄 있어요. 어떻게 가져올까요?</span><div class="seg">${[['refund', '환불'], ['expense', '지출'], ['skip', '건너뛰기']].map(([k, l]) => `<button type="button" data-act="impneg" data-v="${k}" aria-pressed="${f.negative === k}">${l}${conv.negSuggested === k ? ' <small>추천</small>' : ''}</button>`).join('')}</div>
+        <p class="hint">카드 이용내역의 음수는 보통 취소(환불), 다른 가계부는 보통 지출이에요.</p></div>` : ''}
     </div>
     <div class="sheet-footer">${needNeg && !imp.err ? '<p class="foot-hint">위에서 음수 금액 처리 방식을 골라 주세요</p>' : ''}<div class="err" id="imp-err" role="alert">${esc(imp.err)}</div>
       <button type="button" class="btn" data-act="impfind" ${ready ? '' : 'disabled'}>빠진 기록 찾기</button></div></div>`;
@@ -1371,13 +1400,12 @@ function impRow(it, i) {
   const match = m ? `<span class="imp-match">기록: ${parseDate(m.date).getFullYear() !== new Date().getFullYear() ? m.date.slice(0, 4) + '.' : ''}${md(m.date)} ${esc(m.merchant || '거래처 없음')} ${won(m.amount)}원</span>` : '';
   const editing = imp.editing === i;
   return `<div class="import-row${it.on ? ' on' : ''}${it.dup ? ' is-dup' : ''}${editing ? ' is-editing' : ''}" data-i="${i}">
-    <label class="imp-check"><input type="checkbox" data-act="impchk" data-v="${i}" ${it.on ? 'checked' : ''} aria-label="${esc(it.merchant || '거래처 없음')} ${won(it.amount)}원 저장"></label>
-    <button type="button" class="imp-main" data-act="impedit" data-v="${i}" aria-expanded="${editing}">
+    <label class="imp-main imp-sel"><input type="checkbox" data-act="impchk" data-v="${i}" ${it.on ? 'checked' : ''} aria-label="${esc(it.merchant || '거래처 없음')} ${won(it.amount)}원 저장"><span class="imp-body">
       <span class="imp-top"><span class="imp-m">${esc(it.merchant || '거래처 없음')}</span><span class="imp-a num${it.type === 'refund' ? ' ref' : it.type === 'transfer' ? ' ex' : ''}">${it.type === 'refund' ? '+' : ''}${it.amount ? won(it.amount) + '원' : '금액 없음'}</span></span>
       <span class="imp-meta">${impDate(it)}${it.time ? ' ' + it.time : ''} · ${esc(it.category || '미분류')}${it.sug ? ' <span class="muted">(추천)</span>' : ''} · ${it.payer ? esc(it.payer) + ' 결제' : '결제자 미정'}</span>
       ${impTags(it) ? `<span class="imp-tags">${impTags(it)}</span>` : ''}${match}
-      ${editing ? '<span class="imp-edit-hint">수정 중</span>' : impBlocked(it) || it.dup === 'similar' ? '<span class="imp-edit-hint">눌러서 확인·수정</span>' : ''}
-    </button></div>${editing ? impEditor(it, i) : ''}`;
+      ${impBlocked(it) ? '<span class="imp-edit-hint">고쳐야 선택할 수 있어요</span>' : ''}</span></label>
+    <button type="button" class="imp-edit-btn" data-act="impedit" data-v="${i}" aria-expanded="${editing}" aria-label="${esc(it.merchant || '거래처 없음')} 수정">${editing ? '닫기' : '수정'}</button></div>${editing ? impEditor(it, i) : ''}`;
 }
 function impEditor(it, i) {
   const cats = [...new Set([...S.settings.categories, ...(it.category ? [it.category] : [])])];
@@ -1389,7 +1417,7 @@ function impEditor(it, i) {
     <div class="row2"><div class="field"><label for="ie-cat">분류</label><select id="ie-cat" class="in"><option value="">미분류</option>${cats.map(c => `<option ${c === it.category ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></div>
       <div class="field"><label for="ie-payer">결제자</label><select id="ie-payer" class="in">${it.payer ? '' : '<option value="" selected>골라 주세요</option>'}${payerList().map(p => `<option ${p === it.payer ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select></div></div>
     <div class="field"><span class="lab">종류</span><div class="seg" id="ie-type">${Object.entries(TYPE_LABEL).map(([k, l]) => `<button type="button" data-act="ietype" data-v="${k}" aria-pressed="${it.type === k}">${l}</button>`).join('')}</div></div>
-    <details class="more"><summary>더 수정하기 <span class="sum">시각·결제수단·메모</span></summary>
+    <details class="more" data-k="ie-more"><summary><span class="sum-wrap"><span class="sum-lab">더 수정하기</span><span class="sum">시각·결제수단·메모</span></span>${icon('down')}</summary>
       <div class="row2"><div class="field"><label for="ie-time">시각</label><input id="ie-time" type="time" class="in" value="${esc(it.time || '')}"></div>
         <div class="field"><label for="ie-method">결제수단</label><select id="ie-method" class="in">${methods.map(m => `<option ${m === it.method ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div></div>
       <div class="field"><label for="ie-note">메모</label><input id="ie-note" class="in" value="${esc(it.note || '')}" autocomplete="off" maxlength="200"></div></details>
@@ -1483,9 +1511,14 @@ function impSave() {
       refund_pending: false, created_by: S.me, created_at: now + k, updated_at: 0, deleted: false,
     }));
     if (!store.upsertMany(recs)) { imp.saving = false; imp.err = '기기 저장공간이 부족해 저장하지 못했어요'; refreshImpFooter(); return; }
-    const n = recs.length; imp.done = true; imp = null; impPrev = null;
-    $('#sheet').close(); render();
-    toast(`${n}건을 기기에 저장했어요` + (navigator.onLine === false ? ' · 연결되면 공유해요' : ' · 공유하는 중'));
+    const n = recs.length, ids = recs.map(r => r.id), dates = recs.map(r => r.date).sort();
+    imp.done = true; imp = null; impPrev = null;
+    $('#sheet').close();
+    resetListFilter(); lf.period = 'custom'; lf.from = dates[0]; lf.to = dates[dates.length - 1]; tab = 'list'; render(); scrollTo(0, 0);
+    toast(`${n}건 저장했어요 · 저장한 기간을 보여드려요`, '되돌리기', () => {
+      const back = ids.map(id => store.get(id)).filter(Boolean).map(t => Object.assign({}, t, { deleted: true }));
+      if (store.upsertMany(back)) { render(); toast(`${back.length}건을 되돌렸어요`); }
+    });
   }, 30);
 }
 
@@ -1555,7 +1588,7 @@ document.addEventListener('click', e => {
     case 'hpick': homeOff = Number(v); $('#sheet').close(); render(); break;
     case 'homelist': resetListFilter(); offset = homeOff; tab = 'list'; render(); scrollTo(0, 0); break;
     case 'homecat': resetListFilter(); offset = homeOff; lf.cats = [v]; tab = 'list'; render(); scrollTo(0, 0); break;
-    case 'analysis': view.analysis = !view.analysis; saveView(); render(); break;
+    case 'analysis': view.analysis = !view.analysis; if (view.analysis && view.mode === 'month') hOff = homeOff; saveView(); render(); break;
     case 'favlist': openFavList(); break;
     case 'favsave': saveFavorite(v); break;
     case 'morecat': { const det = $('#sheet details.more'); if (det) { det.open = true; const c = $('#cats'); if (c) c.scrollIntoView({ block: 'center' }); } break; }
@@ -1662,7 +1695,7 @@ document.addEventListener('input', e => {
   if (e.target.matches('[data-form=settings] input,[data-form=settings] select,[data-form=settings] textarea,[data-form=setup] input,[data-form=setup] textarea')) dirtyControls.add(e.target);
   if (k === 'q') { lf.q = e.target.value; lfLimit = 200; clearTimeout(qTimer); if (!e.isComposing) qTimer = setTimeout(render, 150); }
   if (k === 'lfmin' || k === 'lfmax' || k === 'lffrom' || k === 'lfto') {
-    if (k === 'lfmin' || k === 'lfmax') { const n = e.target.value.replace(/[^\d]/g, '').slice(0, 10); e.target.value = n ? won(Number(n)) : ''; lfDraft[k === 'lfmin' ? 'min' : 'max'] = Number(n) || 0; }
+    if (k === 'lfmin' || k === 'lfmax') { lfDraft[k === 'lfmin' ? 'min' : 'max'] = Number(e.target.value.replace(/[^\d]/g, '')) || 0; }
     else if (e.target.value) lfDraft[k === 'lffrom' ? 'from' : 'to'] = e.target.value;
     const tmp = document.createElement('div'); tmp.innerHTML = lfSheetHtml();
     ['.lf-foot', '#lf-amount .err', '#lf-period .err'].forEach(sel => { const a = $('#sheet ' + sel), b2 = tmp.querySelector(sel); if (a && b2) a.outerHTML = b2.outerHTML; });
@@ -1683,9 +1716,12 @@ document.addEventListener('input', e => {
   }
   if (k === 'vfrom' || k === 'vto') { if (e.target.value) { view[k === 'vfrom' ? 'from' : 'to'] = e.target.value; saveView(); render(); } }
   if (e.target.id === 'amount' || e.target.id === 'r-amount' || e.target.dataset.money !== undefined) {
-    const n = e.target.value.replace(/[^\d]/g, '').slice(0, 10);
+    const raw = e.target.value.replace(/[^\d]/g, ''), over = raw.length > 10, n = raw.slice(0, 10);
     e.target.value = n ? won(Number(n)) : '';
-    const err = $(e.target.id === 'amount' ? '#entry-err' : '#rule-err'); if (err) err.textContent = '';
+    e.target.setAttribute('aria-invalid', String(over));
+    const err = $(e.target.id === 'amount' ? '#entry-err' : e.target.id === 'r-amount' ? '#rule-err' : e.target.id === 'ie-amount' ? '#ie-err' : '#none');
+    if (err) err.textContent = over ? '금액은 10자리(99억 원)까지 넣을 수 있어요. 마지막 자리는 넣지 않았어요' : '';
+    else if (over) toast('금액은 10자리(99억 원)까지 넣을 수 있어요');
   }
 });
 document.addEventListener('compositionend', e => { if (e.target.dataset.input === 'q') { lf.q = e.target.value; clearTimeout(qTimer); qTimer = setTimeout(render, 150); } });

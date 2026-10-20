@@ -717,6 +717,34 @@ details.settings-row summary .icon{width:20px;height:20px;color:var(--muted)}
 .rule.off .tx{opacity:.72}
 .tool-chips .chip{font-weight:500}
 .card .swipe::after{z-index:2;pointer-events:none}
+/* v21 Astra 검토 반영 */
+.toast.in-sheet{position:absolute;left:50%;bottom:calc(92px + env(safe-area-inset-bottom));z-index:30}
+.refund-line{display:flex;align-items:center;gap:8px;width:100%;min-height:52px;margin-top:10px;padding:10px 14px;text-align:left;background:var(--warning-soft);color:var(--warning);border:0;border-radius:14px;font-size:.875rem}
+.refund-line .icon{width:18px;height:18px;flex:none}
+.refund-line>span{flex:1}
+.refund-line b{font-weight:700}
+.off-t{color:var(--text-2);font-weight:600}
+.rule.off .tx{opacity:1}
+.rule.off .ic{opacity:.55}
+.status.state-line{justify-content:flex-start;text-align:left}
+.import-row{grid-template-columns:minmax(0,1fr) auto;align-items:start}
+.imp-sel{display:grid;grid-template-columns:52px minmax(0,1fr);gap:0;cursor:pointer;padding:12px 0 12px 0;min-height:64px}
+.imp-sel>input{justify-self:center;margin-top:2px;width:24px;height:24px;accent-color:var(--action)}
+.imp-body{display:flex;flex-direction:column;gap:3px;min-width:0}
+.imp-edit-btn{align-self:center;margin:0 12px 0 4px;min-height:44px;min-width:56px;padding:0 12px;border:1px solid var(--control);background:var(--surface);border-radius:12px;font-size:.875rem;font-weight:600;color:var(--text)}
+.import-row.is-editing .imp-edit-btn{background:var(--brand-soft);border-color:var(--accent);color:var(--accent)}
+.imp-meta{word-break:keep-all;overflow-wrap:anywhere}
+.imp-tags .tag,.imp-match{font-size:.8125rem}
+.sum-wrap{display:flex;flex-direction:column;gap:1px;min-width:0}
+.sum-lab{font-size:.8125rem;color:var(--text-2);font-weight:600}
+.lab-strong{display:block;margin:4px 0 7px;font-size:.875rem;font-weight:600;color:var(--text-2)}
+#sheet .map-more summary,#sheet .imp-edit .more summary{color:var(--text-2)}
+.rs-main{flex-wrap:wrap;row-gap:2px}
+.rs-v{white-space:normal;overflow-wrap:anywhere}
+.budget-in input{min-height:44px}
+.settings-row.static{flex-wrap:wrap}
+#sheet .chips .chip[aria-pressed=true]::before{content:'✓';margin-right:4px;font-weight:700}
+.search-row+.period-nav{margin-top:10px;margin-bottom:0}
 </style>
 </head>
 <body>

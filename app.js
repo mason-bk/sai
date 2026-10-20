@@ -655,7 +655,7 @@ function listView() {
     if (t.date !== lastDay) {
       if (rows) rows += '</div>';
       const d = parseDate(t.date);
-      rows += `<p class="day" data-ui-key="day-${t.date}">${d.getMonth() + 1}.${d.getDate()} ${WEEK[d.getDay()]}요일</p><div class="card" data-ui-key="rows-${t.date}">`;
+      rows += `<p class="day" data-ui-key="day-${t.date}">${d.getFullYear() !== new Date().getFullYear() ? d.getFullYear() + '년 ' : ''}${d.getMonth() + 1}.${d.getDate()} ${WEEK[d.getDay()]}요일</p><div class="card" data-ui-key="rows-${t.date}">`;
       lastDay = t.date;
     }
     rows += txRow(t);
@@ -999,6 +999,7 @@ const lastMethod = () => {
 /* ---------------- 즐겨찾기 (공유 설정 prefs.favorites, 두 사람이 같이 씀) ---------------- */
 const FAV_MAX = 30;
 const favorites = () => { const p = store.prefs(); return p && Array.isArray(p.favorites) ? p.favorites : []; };
+// 즐겨찾기 묶음 = 거래처·금액·분류·결제자 (추가·빼기·중복 판정이 같은 기준)
 const favKey = f => [f.merchant, f.amount, f.category || '', f.payer || ''].join('|');
 function favoriteOfDraft() {
   const f = $('[data-form=entry]'); if (f) readEntry(f);
@@ -1006,25 +1007,28 @@ function favoriteOfDraft() {
 }
 function addFavorite() {
   const fav = favoriteOfDraft(), msg = $('#fav-msg');
+  if (draft.type !== 'expense') { msg.textContent = '지출 기록만 즐겨찾기에 넣을 수 있어요'; return; }
   if (!fav.amount || !fav.merchant) { msg.textContent = '금액과 거래처가 있어야 즐겨찾기에 넣을 수 있어요'; return; }
+  if (!payerList().includes(fav.payer)) { msg.textContent = '결제자를 골라 주세요'; return; }
   const list = favorites();
   if (list.some(f => favKey(f) === favKey(fav))) { msg.textContent = '이미 즐겨찾기에 있어요'; return; }
   if (list.length >= FAV_MAX) { msg.textContent = `즐겨찾기는 ${FAV_MAX}개까지예요. 설정에서 정리해 주세요`; return; }
   if (!store.setPrefs({ favorites: list.concat(fav) })) { msg.textContent = '즐겨찾기를 저장하지 못했어요'; return; }
   const b = $('[data-act=favadd]'); if (b) { b.outerHTML = favButton(); }
-  $('#fav-msg').textContent = '즐겨찾기에 넣었어요. 기록 화면 맨 위에 별표로 보여요';
+  $('#fav-msg').textContent = '즐겨찾기에 넣었어요. 두 사람의 기록 화면 맨 위에 별표로 보여요';
 }
 function removeFavorite(id, silent) {
   const list = favorites(), gone = list.find(f => f.id === id);
-  if (!gone || !store.setPrefs({ favorites: list.filter(f => f.id !== id) })) return;
+  if (!gone || !store.setPrefs({ favorites: list.filter(f => f.id !== id) })) return false;
   if (!silent) toast('즐겨찾기만 삭제했어요', '되돌리기', () => { if (!favorites().some(f => f.id === id)) store.setPrefs({ favorites: favorites().concat(gone) }); });
+  return true;
 }
 function favButton() {
-  const cur = draft && favorites().find(f => f.merchant === draft.merchant && f.amount === draft.amount);
+  const cur = draft && favorites().find(f => favKey(f) === favKey(draft));
   return cur ? `<button type="button" class="btn ghost" data-act="favdel" data-v="${esc(cur.id)}">${icon('starOn')}<span>즐겨찾기에서 빼기</span></button>`
     : `<button type="button" class="btn ghost" data-act="favadd">${icon('star')}<span>즐겨찾기에 추가</span></button>`;
 }
-// 원탭 = 폼 채우기. 저장은 한 번 더 누른다(가로 스크롤 중 오탭·지난 금액 확인)
+// 원탭 = 폼 채우기(거래처·금액·분류·결제자). 결제수단은 지금 기본값 그대로. 저장은 한 번 더(오탭·지난 금액 확인)
 function applyFavorite(id) {
   const f = favorites().find(x => x.id === id); if (!f) return;
   readEntry($('[data-form=entry]'));
@@ -1032,24 +1036,27 @@ function applyFavorite(id) {
   if (typed && !confirm('작성 중인 내용을 즐겨찾기로 바꿀까요?')) return;
   Object.assign(draft, { amount: f.amount, merchant: f.merchant, type: 'expense', date: today(), refund_pending: false });
   draft.category = S.settings.categories.includes(f.category) ? f.category : '';
-  if (payerList().includes(f.payer)) draft.payer = f.payer;
-  if (S.settings.methods.includes(f.method)) draft.method = f.method;
+  const payerOk = payerList().includes(f.payer);
+  if (payerOk) draft.payer = f.payer;
   $('#amount').value = won(f.amount); $('#merchant').value = f.merchant; $('#date').value = draft.date;
-  $('#payer').value = draft.payer; $('#method').value = draft.method; $('#rp').checked = false;
+  $('#payer').value = draft.payer; $('#rp').checked = false;
   setPressed($('#cats'), draft.category);
   const seg = $('#sheet [data-act=type]'); if (seg) setPressed(seg.parentElement, 'expense');
   setPressed($('.quick-chips'), id);
   refreshSummary();
   if (document.activeElement) document.activeElement.blur(); // 키보드를 닫아 저장 버튼이 보이게
-  const hint = $('#fav-hint'); hint.hidden = false; hint.textContent = `${draft.payer} 결제 · ${won(f.amount)}원. 맞으면 저장을 눌러 주세요`;
+  const hint = $('#fav-hint'); hint.hidden = false;
+  hint.textContent = !payerOk ? '즐겨찾기의 결제자가 목록에 없어요. 결제자를 골라 주세요'
+    : !draft.category && f.category ? `'${f.category}' 분류가 없어요. 분류를 골라 주세요`
+    : `${draft.payer} 결제 · ${won(f.amount)}원. 맞으면 저장을 눌러 주세요`;
   $('#sheet .sheet-h .save').classList.add('ready');
 }
 
 /* ---------------- 가져오기: 카드 알림 붙여넣기 · 파일 (확인 목록은 공용) ---------------- */
 const XLSX_URL = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
 const XLSX_SRI = 'sha512-r22gChDnGvBylk90+2e/ycr3RVrDi8DIOkIGNhJlKfuyQM4tIRAI062MaV8sfjQKYVGjOBaZBOA87z+IhZE9DA==';
-const IMP_PAGE = 100, IMP_MAX_ROWS = 5000;
-let imp = null, xlsxLoading = null;
+const IMP_PAGE = 100, IMP_MAX_ROWS = 5000, IMP_MAX_BYTES = 10 * 1024 * 1024;
+let imp = null, impPrev = null, xlsxLoading = null;
 function loadXlsx() {
   if (window.XLSX) return Promise.resolve(window.XLSX);
   return xlsxLoading || (xlsxLoading = new Promise((ok, fail) => {
@@ -1062,11 +1069,19 @@ function loadXlsx() {
 }
 function openImport(kind) {
   if ($('[data-form=entry]')) stashDraft();
-  imp = { kind, step: kind, text: '', items: [], unread: [], editing: -1, shown: IMP_PAGE, file: null, err: '', saving: false };
+  // 저장하지 않고 닫은 확인 목록은 앱을 끄기 전까지 이어서 볼 수 있다(원문·파일은 기기 저장소에 남기지 않음)
+  if (impPrev && impPrev.kind === kind && impPrev.items.length) { imp = impPrev; imp.resumed = true; imp.saving = false; }
+  else imp = { kind, step: kind, text: '', items: [], unread: [], editing: -1, shown: IMP_PAGE, file: null, err: '', saving: false };
+  impPrev = null;
   showSheet(importHtml());
-  if (kind === 'paste') { const t = $('#paste-text'); t.focus({ preventScroll: true }); }
+  if (imp.step === 'paste') { const t = $('#paste-text'); t.focus({ preventScroll: true }); }
 }
-const renderImport = () => repaintSheet(importHtml());
+// 시트가 닫힐 때 확인 중이던 목록을 잠시 보관
+function parkImport() {
+  if (imp && imp.step === 'review' && imp.items.length && !imp.done) { commitEdit(); impPrev = imp; }
+  imp = null;
+}
+const renderImport = () => { if (imp) repaintSheet(importHtml()); };
 function impHead(title, back) {
   return `<div class="sheet-h"><button type="button" data-act="${back ? 'impback' : 'close'}">${back ? '뒤로' : '닫기'}</button><b id="sheet-title" tabindex="-1" autofocus>${title}</b>${back ? '<button type="button" data-act="close">닫기</button>' : '<span class="sheet-h-sp"></span>'}</div>`;
 }
@@ -1083,26 +1098,30 @@ function importHtml() {
   if (st === 'file') return `<div class="sheet-wrap">${impHead('빠진 기록 가져오기', false)}
     <div class="sheet-b">
       <p class="lead-hint">카드사 이용내역이나 다른 가계부에서 내려받은 <b>CSV·엑셀 파일</b>을 골라 주세요. 이미 적은 기록과 대조해 빠진 것만 골라 드려요.</p>
-      <label class="btn file-btn" for="imp-file">${icon('file')}<span>${imp.loading ? '파일 읽는 중…' : '파일 고르기'}</span></label>
-      <input type="file" id="imp-file" class="visually-hidden" accept=".csv,.tsv,.txt,.xlsx,.xls,.xlsm,text/csv,text/plain,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+      <label class="btn file-btn${imp.loading ? ' is-busy' : ''}" for="imp-file" aria-disabled="${!!imp.loading}">${icon('file')}<span>${imp.loading ? '파일 읽는 중…' : '파일 고르기'}</span></label>
+      <input type="file" id="imp-file" class="visually-hidden" ${imp.loading ? 'disabled' : ''} accept=".csv,.tsv,.txt,.xlsx,.xls,.xlsm,text/csv,text/plain,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
       <div class="err" id="imp-err" role="alert">${esc(imp.err)}</div>
-      <p class="hint">파일은 이 기기 안에서만 읽어요. 엑셀(xlsx) 파일은 처음 한 번 읽기 도구를 내려받아야 해서 인터넷이 필요해요.</p>
+      <p class="hint">10MB·5,000줄까지. 더 크면 기간을 나눠 내려받아 주세요. 파일은 이 기기 안에서만 읽어요. 엑셀(xlsx·xls)은 읽기 도구를 내려받아야 해서 인터넷이 필요해요. CSV는 오프라인에서도 돼요.</p>
     </div></div>`;
   if (st === 'map') return mapHtml();
   return reviewHtml();
 }
 
-/* 파일 → 표 */
+/* 파일 → 표. 읽는 사이 다른 파일을 고르거나 닫으면 늦게 끝난 결과는 버린다 */
 async function loadImportFile(file) {
-  imp.err = ''; imp.loading = true; renderImport();
+  const mine = imp, ticket = (mine.ticket = (mine.ticket || 0) + 1);
+  const stale = () => imp !== mine || mine.ticket !== ticket;
+  mine.err = ''; mine.loading = true; renderImport();
   try {
-    if (file.size > 10 * 1024 * 1024) throw new Error('파일이 너무 커요(10MB까지). 기간을 나눠 내려받아 주세요');
-    const buf = await file.arrayBuffer(), u8 = new Uint8Array(buf);
+    if (file.size > IMP_MAX_BYTES) throw new Error('파일이 너무 커요(10MB까지). 기간을 나눠 내려받아 주세요');
+    const buf = await file.arrayBuffer(); if (stale()) return;
+    const u8 = new Uint8Array(buf);
     const zip = u8[0] === 0x50 && u8[1] === 0x4B, ole = u8[0] === 0xD0 && u8[1] === 0xCF;
     let sheets;
     if (zip || ole || /\.(xlsx|xls|xlsm)$/i.test(file.name)) {
       let X;
       try { X = await loadXlsx(); } catch (e) { throw new Error('엑셀 파일을 읽으려면 인터넷 연결이 필요해요. CSV 파일은 오프라인에서도 돼요'); }
+      if (stale()) return;
       let wb;
       try { wb = X.read(u8, { type: 'array' }); } catch (e) { throw new Error(/password|encrypt/i.test(e.message) ? '암호가 걸린 파일이에요. 암호 없이 저장한 파일을 골라 주세요' : '이 파일을 읽지 못했어요. CSV나 XLSX로 저장해 다시 골라 주세요'); }
       sheets = wb.SheetNames.map(name => ({ name, rows: X.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: '' })
@@ -1113,21 +1132,23 @@ async function loadImportFile(file) {
     sheets = sheets.filter(s => s.rows.length);
     if (!sheets.length) throw new Error('파일에 읽을 내용이 없어요');
     const si = sheets.reduce((b, s, i) => s.rows.length > sheets[b].rows.length ? i : b, 0);
-    imp.file = { name: file.name, u8, sheets, si, enc: '', negative: '' };
+    mine.file = { name: file.name, u8, sheets, si, enc: '', negative: '' };
     setupMapping();
-    imp.step = 'map';
-  } catch (e) { imp.err = e.message || '파일을 읽지 못했어요'; }
-  imp.loading = false; renderImport();
+    mine.step = 'map';
+  } catch (e) { if (stale()) return; mine.err = e.message || '파일을 읽지 못했어요'; }
+  mine.loading = false; renderImport();
 }
 function setupMapping(keepHeader) {
   const f = imp.file, rows = f.sheets[f.si].rows;
   if (!keepHeader) f.h = core.detectHeaderRow(rows);
-  const data = rows.slice(f.h + 1);
-  f.data = data.slice(0, IMP_MAX_ROWS); f.cut = data.length > IMP_MAX_ROWS;
+  f.data = rows.slice(f.h + 1);
+  f.over = f.data.length > IMP_MAX_ROWS;
   f.header = f.h >= 0 ? rows[f.h] : null;
-  f.mapping = core.guessColumns(f.header, f.data);
+  f.mapping = core.guessColumns(f.header, f.data.slice(0, 200));
+  f.negative = '';
 }
-const ROLES = [['date', '날짜', 1], ['amount', '금액', 1], ['merchant', '가맹점·거래처', 1], ['time', '시각'], ['type', '종류(취소·구분)'], ['category', '분류'], ['payer', '결제자'], ['method', '결제수단'], ['note', '메모'], ['months', '할부 개월']];
+const ROLES = [['date', '날짜', 1], ['amount', '금액(원)', 1], ['merchant', '가맹점·거래처', 1], ['time', '시각'], ['type', '종류(승인·취소·구분)'], ['currency', '통화'], ['category', '분류'], ['payer', '결제자'], ['method', '결제수단'], ['note', '메모'], ['months', '할부 개월']];
+const convOpts = f => ({ negative: f.negative, header: f.header, today: today() });
 function mapHtml() {
   const f = imp.file, rows = f.sheets[f.si].rows;
   const ncol = Math.max(0, ...f.data.slice(0, 50).map(r => r.length), f.header ? f.header.length : 0);
@@ -1136,46 +1157,65 @@ function mapHtml() {
   const opt = (role, i) => `<option value="${i}" ${f.mapping[role] === i ? 'selected' : ''}>${esc(colName(i))}${sampleOf(i) ? ' · 예: ' + esc(sampleOf(i)) : ''}</option>`;
   const sel = ([role, label, req]) => `<label class="map-row" for="map-${role}"><span>${label}${req ? '' : ' <span class="muted">선택</span>'}</span>
     <select id="map-${role}" class="in" data-map="${role}"><option value="-1">${req ? '골라 주세요' : '없음'}</option>${Array.from({ length: ncol }, (_, i) => opt(role, i)).join('')}</select></label>`;
-  const conv = core.rowsToCandidates(f.data, f.mapping, { negative: f.negative });
-  const prev = conv.items.slice(0, 3);
+  // 미리보기는 앞쪽 원본 3줄을 그대로 변환해 원본 → 결과(또는 못 읽는 이유)로 보여 준다
+  const sample = f.data.slice(0, 3);
+  const pv = sample.map(r => { const c = core.rowsToCandidates([r], f.mapping, Object.assign(convOpts(f), { negative: f.negative || 'refund' })); return { r, it: c.items[0], why: c.unread[0] && c.unread[0].why }; });
+  const conv = f.over ? null : core.rowsToCandidates(f.data, f.mapping, convOpts(f));
+  const needNeg = conv && conv.negatives && !f.negative;
+  const ready = conv && f.mapping.date >= 0 && f.mapping.amount >= 0 && conv.items.length && !needNeg;
   const isCsv = f.sheets.length === 1 && !/\.(xlsx|xls|xlsm)$/i.test(f.name);
   return `<div class="sheet-wrap">${impHead('열 연결', true)}
     <div class="sheet-b">
-      <div class="file-line"><span>${icon('file')}<b>${esc(f.name)}</b> <span class="muted">${f.data.length}줄${f.cut ? ` (앞 ${IMP_MAX_ROWS}줄만)` : ''}</span></span><button type="button" class="link" data-act="impfile">다른 파일</button></div>
+      <div class="file-line"><span>${icon('file')}<b>${esc(f.name)}</b> <span class="muted">${f.data.length.toLocaleString('ko-KR')}줄</span></span><button type="button" class="link" data-act="impfile">다른 파일</button></div>
+      ${f.over ? `<p class="err" role="alert">5,000줄이 넘어요(${f.data.length.toLocaleString('ko-KR')}줄). 카드사에서 기간을 나눠 내려받아 주세요.</p>` : ''}
       ${f.sheets.length > 1 ? `<label class="map-row" for="map-sheet"><span>시트</span><select id="map-sheet" class="in" data-map="sheet">${f.sheets.map((s, i) => `<option value="${i}" ${i === f.si ? 'selected' : ''}>${esc(s.name)} (${s.rows.length}줄)</option>`).join('')}</select></label>` : ''}
       <label class="map-row" for="map-head"><span>머리줄</span><select id="map-head" class="in" data-map="head"><option value="-1" ${f.h < 0 ? 'selected' : ''}>없음 (첫 줄부터 내용)</option>${rows.slice(0, 15).map((r, i) => `<option value="${i}" ${f.h === i ? 'selected' : ''}>${i + 1}번째 줄: ${esc(r.filter(v => v !== '').slice(0, 4).join(', ').slice(0, 40))}</option>`).join('')}</select></label>
       ${isCsv ? `<p class="hint enc-line">글자가 깨졌나요? <button type="button" class="link" data-act="impenc">${f.enc === 'euc-kr' ? '자동으로 다시 읽기' : '한국어(EUC-KR)로 다시 읽기'}</button></p>` : ''}
       <h2 class="map-h">어떤 열인지 확인해 주세요</h2>
       <div class="column-map">${ROLES.slice(0, 3).map(sel).join('')}</div>
-      <details class="more"><summary>더 연결하기 <span class="sum">시각·종류·분류·결제자·메모</span></summary><div class="column-map">${ROLES.slice(3).map(sel).join('')}</div></details>
-      ${conv.negatives ? `<div class="field"><span class="lab">음수 금액(${conv.negatives}줄)은</span><div class="seg">${[['refund', '환불'], ['expense', '지출'], ['skip', '건너뛰기']].map(([k, l]) => `<button type="button" data-act="impneg" data-v="${k}" aria-pressed="${conv.negRule === k}">${l}</button>`).join('')}</div>
+      <details class="more"><summary>더 연결하기 <span class="sum">시각·종류·통화·분류·결제자·메모</span></summary><div class="column-map">${ROLES.slice(3).map(sel).join('')}</div></details>
+      ${conv && conv.negatives ? `<div class="field neg-field${needNeg ? ' need' : ''}"><span class="lab">음수 금액이 ${conv.negatives}줄 있어요. 어떻게 가져올까요?</span><div class="seg">${[['refund', '환불'], ['expense', '지출'], ['skip', '건너뛰기']].map(([k, l]) => `<button type="button" data-act="impneg" data-v="${k}" aria-pressed="${f.negative === k}">${l}${conv.negSuggested === k ? ' <small>추천</small>' : ''}</button>`).join('')}</div>
         <p class="hint">카드 이용내역의 음수는 보통 취소(환불), 다른 가계부는 보통 지출이에요.</p></div>` : ''}
-      <h2 class="map-h">미리보기</h2>
-      <div class="card file-preview">${prev.length ? prev.map(it => `<div class="pv-row"><span>${md(it.date)}${it.time ? ' ' + it.time : ''} · ${esc(it.merchant || '거래처 없음')}</span><b class="num${it.type === 'refund' ? ' ref' : ''}">${it.type === 'refund' ? '환불 ' : it.type === 'transfer' ? '제외 ' : ''}${won(it.amount)}원</b></div>`).join('')
-        : `<div class="empty">${f.mapping.date < 0 ? '날짜 열을 골라 주세요' : f.mapping.amount < 0 ? '금액 열을 골라 주세요' : '읽을 수 있는 줄이 없어요. 머리줄과 열을 확인해 주세요'}</div>`}</div>
-      <p class="hint">${conv.items.length}건 읽음${conv.unread.length ? ` · ${conv.unread.length}줄은 가져올 수 없어요(다음 화면에서 이유 확인)` : ''}</p>
-      <div class="err" id="imp-err" role="alert">${esc(imp.err)}</div>
-      <button type="button" class="btn" data-act="impfind" ${prev.length ? '' : 'disabled'}>빠진 기록 찾기</button>
-    </div></div>`;
+      <h2 class="map-h">미리보기 <span class="h2sub">앞쪽 원본 3줄</span></h2>
+      <div class="card file-preview">${pv.map(({ r, it, why }) => `<div class="pv-row"><span class="pv-src">${esc(r.filter(v => v !== '' && v != null).join(' · ').slice(0, 70))}</span>
+        ${it ? `<span class="pv-out"><span>→ ${md(it.date)}${it.time ? ' ' + it.time : ''} · ${esc(it.merchant || '거래처 없음')}</span><b class="num${it.type === 'refund' ? ' ref' : ''}">${it.type === 'refund' ? '환불 ' : it.type === 'transfer' ? '제외 ' : ''}${it.amount ? won(it.amount) + '원' : esc(it.foreign || '금액 없음')}</b></span>` : `<span class="pv-out pv-bad">→ ${esc(why || (f.mapping.date < 0 ? '날짜 열을 골라 주세요' : f.mapping.amount < 0 ? '금액 열을 골라 주세요' : '이 줄은 건너뛰어요'))}</span>`}</div>`).join('') || '<div class="empty">내용이 없어요</div>'}</div>
+      ${conv ? `<p class="hint">${conv.items.length}건 읽음${conv.unread.length ? ` · ${conv.unread.length}줄은 가져올 수 없어요(다음 화면에서 이유 확인)` : ''}</p>` : ''}
+    </div>
+    <div class="sheet-footer">${needNeg && !imp.err ? '<p class="foot-hint">위에서 음수 금액 처리 방식을 골라 주세요</p>' : ''}<div class="err" id="imp-err" role="alert">${esc(imp.err)}</div>
+      <button type="button" class="btn" data-act="impfind" ${ready ? '' : 'disabled'}>빠진 기록 찾기</button></div></div>`;
 }
 
 /* 후보 → 확인 목록 */
+// 저장을 막는 조건(선택·저장 두 곳에서 같은 검사)
+function impValidate(it) {
+  const e = [];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(it.date || '')) e.push('날짜를 확인해 주세요');
+  else if (it.date > today()) e.push('미래 날짜예요. 확인해 주세요');
+  if (!(Number.isInteger(it.amount) && it.amount > 0)) e.push(it.foreign ? '원화 금액을 넣어 주세요' : '금액을 넣어 주세요');
+  if (!it.merchant) e.push('거래처를 넣어 주세요');
+  if (!payerList().includes(it.payer)) e.push('결제자를 골라 주세요');
+  return e;
+}
+const impBlocked = it => it.issues.length > 0 || impValidate(it).length > 0;
+const impDefaultOn = it => !it.dup && !impBlocked(it);
 function prepareItems(items, rawFor) {
-  const hist = liveTxs(), defMethod = lastMethod();
+  const hist = liveTxs(), defMethod = lastMethod(), sg = core.makeSuggester(hist, S.settings);
   items.forEach(it => {
     it.uid = uid();
-    const sg = core.suggest(it.merchant, hist, S.settings, rawFor ? it.raw : '');
-    if (!it.category || !S.settings.categories.includes(it.category)) { const fc = it.category; it.category = sg.category || fc || ''; it.sug = !!sg.category && !fc; }
-    if (!it.payer || !payerList().includes(it.payer)) it.payer = S.me;
-    if (!it.method || !S.settings.methods.includes(it.method)) it.method = sg.method || defMethod;
+    const s = sg(it.merchant, rawFor ? it.raw : '');
+    if (!it.category || !S.settings.categories.includes(it.category)) { const fc = it.category; it.category = s.category || fc || ''; it.sug = !!s.category && !fc; }
+    if (it.payer && !payerList().includes(it.payer)) { it.payerRaw = it.payer; it.payer = ''; }
+    if (!it.payer && !it.payerRaw) it.payer = S.me;
+    if (!it.method || !S.settings.methods.includes(it.method)) it.method = s.method || defMethod;
+    it.issues = [...new Set([...it.issues, ...impValidate(it).filter(x => !it.issues.includes(x))])];
   });
-  core.markDuplicates(items, hist);
-  items.forEach(it => { it.on = !it.dup && !it.issues.length && it.amount > 0; });
+  core.markDuplicates(items, hist, { batchNoTime: !!rawFor });
+  items.forEach(it => { it.on = impDefaultOn(it); });
   return items;
 }
 const impCount = () => {
   const c = { fresh: 0, dup: 0, check: 0 };
-  imp.items.forEach(it => { if (it.dup === 'same' || it.dup === 'batch') c.dup++; else if (it.issues.length || it.dup === 'similar' || !it.amount) c.check++; else c.fresh++; });
+  imp.items.forEach(it => { if (it.dup === 'same' || it.dup === 'batch') c.dup++; else if (impBlocked(it) || it.dup === 'similar') c.check++; else c.fresh++; });
   return c;
 };
 function impTags(it) {
@@ -1186,98 +1226,138 @@ function impTags(it) {
   if (it.dup === 'similar') t.push(`<span class="tag warn">비슷한 기록 있음</span>`);
   if (it.dup === 'batch') t.push('<span class="tag dup">목록 안에서 반복</span>');
   it.issues.forEach(s => t.push(`<span class="tag warn">${esc(s)}</span>`));
+  if (it.payerRaw && !it.payer) t.push(`<span class="tag q">원본 결제자: ${esc(it.payerRaw)}</span>`);
   if (it.months) t.push(`<span class="tag q">${it.months}개월 할부</span>`);
   if (it.foreign) t.push(`<span class="tag q">${esc(it.foreign)}</span>`);
   return t.join('');
 }
+// 올해가 아니거나 연도를 추정해 확인이 필요하면 연도까지 보여 준다
+function impDate(it) {
+  const d = parseDate(it.date), y = d.getFullYear();
+  const showY = y !== new Date().getFullYear() || (it.yearGuessed && it.issues.some(s => /연도/.test(s)));
+  return `${showY ? y + '.' : ''}${d.getMonth() + 1}.${d.getDate()}(${WEEK[d.getDay()]})${it.yearGuessed && showY ? ' <span class="muted">연도 추정</span>' : ''}`;
+}
 function impRow(it, i) {
-  const d = parseDate(it.date);
-  const match = it.match ? `<span class="imp-match">기록: ${md(it.match.date)} ${esc(it.match.merchant || '거래처 없음')} ${won(it.match.amount)}원</span>` : '';
-  return `<div class="import-row${it.on ? ' on' : ''}${it.dup ? ' is-dup' : ''}" data-i="${i}">
+  const m = it.match;
+  const match = m ? `<span class="imp-match">기록: ${parseDate(m.date).getFullYear() !== new Date().getFullYear() ? m.date.slice(0, 4) + '.' : ''}${md(m.date)} ${esc(m.merchant || '거래처 없음')} ${won(m.amount)}원</span>` : '';
+  const editing = imp.editing === i;
+  return `<div class="import-row${it.on ? ' on' : ''}${it.dup ? ' is-dup' : ''}${editing ? ' is-editing' : ''}" data-i="${i}">
     <label class="imp-check"><input type="checkbox" data-act="impchk" data-v="${i}" ${it.on ? 'checked' : ''} aria-label="${esc(it.merchant || '거래처 없음')} ${won(it.amount)}원 저장"></label>
-    <button type="button" class="imp-main" data-act="impedit" data-v="${i}" aria-expanded="${imp.editing === i}">
+    <button type="button" class="imp-main" data-act="impedit" data-v="${i}" aria-expanded="${editing}">
       <span class="imp-top"><span class="imp-m">${esc(it.merchant || '거래처 없음')}</span><span class="imp-a num${it.type === 'refund' ? ' ref' : it.type === 'transfer' ? ' ex' : ''}">${it.type === 'refund' ? '+' : ''}${it.amount ? won(it.amount) + '원' : '금액 없음'}</span></span>
-      <span class="imp-meta">${d.getMonth() + 1}.${d.getDate()}(${WEEK[d.getDay()]})${it.time ? ' ' + it.time : ''} · ${esc(it.category || '미분류')}${it.sug ? ' <span class="muted">(추천)</span>' : ''} · ${esc(it.payer)} 결제</span>
+      <span class="imp-meta">${impDate(it)}${it.time ? ' ' + it.time : ''} · ${esc(it.category || '미분류')}${it.sug ? ' <span class="muted">(추천)</span>' : ''} · ${it.payer ? esc(it.payer) + ' 결제' : '결제자 미정'}</span>
       ${impTags(it) ? `<span class="imp-tags">${impTags(it)}</span>` : ''}${match}
-    </button></div>${imp.editing === i ? impEditor(it, i) : ''}`;
+      ${editing ? '<span class="imp-edit-hint">수정 중</span>' : impBlocked(it) || it.dup === 'similar' ? '<span class="imp-edit-hint">눌러서 확인·수정</span>' : ''}
+    </button></div>${editing ? impEditor(it, i) : ''}`;
 }
 function impEditor(it, i) {
   const cats = [...new Set([...S.settings.categories, ...(it.category ? [it.category] : [])])];
-  return `<div class="imp-edit" data-ui-key="imp-edit">
-    <div class="row2"><div class="field"><label for="ie-amount">금액</label><input id="ie-amount" class="in num" data-money inputmode="numeric" value="${it.amount ? won(it.amount) : ''}" autocomplete="off"></div>
+  const methods = [...new Set([...S.settings.methods, ...(it.method ? [it.method] : [])])];
+  return `<div class="imp-edit" data-ui-key="imp-edit" id="imp-edit">
+    <div class="row2"><div class="field"><label for="ie-amount">금액(원)</label><input id="ie-amount" class="in num" data-money inputmode="numeric" value="${it.amount ? won(it.amount) : ''}" autocomplete="off"></div>
       <div class="field"><label for="ie-date">날짜</label><input id="ie-date" type="date" class="in" value="${esc(it.date)}" max="${today()}"></div></div>
     <div class="field"><label for="ie-merchant">거래처</label><input id="ie-merchant" class="in" value="${esc(it.merchant)}" autocomplete="off"></div>
     <div class="row2"><div class="field"><label for="ie-cat">분류</label><select id="ie-cat" class="in"><option value="">미분류</option>${cats.map(c => `<option ${c === it.category ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></div>
-      <div class="field"><label for="ie-payer">결제자</label><select id="ie-payer" class="in">${payerList().map(p => `<option ${p === it.payer ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select></div></div>
+      <div class="field"><label for="ie-payer">결제자</label><select id="ie-payer" class="in">${it.payer ? '' : '<option value="" selected>골라 주세요</option>'}${payerList().map(p => `<option ${p === it.payer ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select></div></div>
     <div class="field"><span class="lab">종류</span><div class="seg" id="ie-type">${Object.entries(TYPE_LABEL).map(([k, l]) => `<button type="button" data-act="ietype" data-v="${k}" aria-pressed="${it.type === k}">${l}</button>`).join('')}</div></div>
+    <details class="more"><summary>더 수정하기 <span class="sum">시각·결제수단·메모</span></summary>
+      <div class="row2"><div class="field"><label for="ie-time">시각</label><input id="ie-time" type="time" class="in" value="${esc(it.time || '')}"></div>
+        <div class="field"><label for="ie-method">결제수단</label><select id="ie-method" class="in">${methods.map(m => `<option ${m === it.method ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div></div>
+      <div class="field"><label for="ie-note">메모</label><input id="ie-note" class="in" value="${esc(it.note || '')}" autocomplete="off" maxlength="150"></div></details>
     ${it.raw ? `<details class="source-detail"><summary>원문 보기</summary><pre>${esc(it.raw)}</pre></details>` : ''}
+    <div class="err" id="ie-err" role="alert"></div>
     <div class="imp-edit-btns"><button type="button" class="btn ghost" data-act="impcancel">취소</button><button type="button" class="btn" data-act="impapply" data-v="${i}">목록에 반영</button></div>
   </div>`;
 }
 function impFooter() {
   const sel = imp.items.filter(it => it.on), s = core.summarize(sel);
+  const parts = [s.expense ? `지출 <b class="num">${won(s.expense)}원</b>` : '', s.refund ? `환불 <b class="num">${won(s.refund)}원</b>` : '', s.transfer ? `지출 제외 <b class="num">${won(s.transfer)}원</b>` : ''].filter(Boolean).join(' · ');
+  const label = imp.saving ? '저장 중…' : imp.editing >= 0 ? '수정 반영하고 ' + (sel.length || '') + (sel.length ? '건 ' : '') + '저장' : sel.length ? sel.length + '건 저장' : '저장';
   return `<div class="sheet-footer" id="imp-foot">
-    <p class="foot-sum">${sel.length ? `<b>${sel.length}건</b> 선택 · 지출 <b class="num">${won(s.expense)}원</b>${s.refund ? ` · 환불 <b class="num">${won(s.refund)}원</b>` : ''}` : '추가할 내역을 골라 주세요'}</p>
+    <p class="foot-sum">${sel.length ? `<b>${sel.length}건</b> 선택 · ${parts}` : '추가할 내역을 골라 주세요'}</p>
     <div class="err" id="imp-err" role="alert">${esc(imp.err)}</div>
-    <button type="button" class="btn" data-act="impsave" ${sel.length && !imp.saving ? '' : 'disabled'}>${imp.saving ? '저장 중…' : sel.length ? sel.length + '건 저장' : '저장'}</button></div>`;
+    <button type="button" class="btn" data-act="impsave" ${(sel.length || imp.editing >= 0) && !imp.saving ? '' : 'disabled'}>${label}</button></div>`;
 }
 function reviewHtml() {
-  const c = impCount(), file = imp.kind === 'file';
+  const c = impCount(), file = imp.kind === 'file', st = store.status();
   const rows = imp.items.slice(0, imp.shown).map(impRow).join('');
   const more = imp.items.length - imp.shown;
+  const when = st.lastSync ? new Date(st.lastSync).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' }) : '';
   return `<div class="sheet-wrap">${impHead(file ? '빠진 기록 확인' : '알림 확인', true)}
     <div class="sheet-b">
+      ${imp.resumed ? `<p class="resume-line">아까 확인하던 목록이에요. <button type="button" class="link" data-act="impfresh">새로 시작</button></p>` : ''}
       <div class="import-summary" role="status"><span><b class="num">${c.fresh}</b> ${file ? '빠진 기록' : '새 기록'}</span><span><b class="num">${c.dup}</b> 이미 있음</span><span${c.check ? ' class="warn"' : ''}><b class="num">${c.check}</b> 확인 필요</span></div>
-      ${navigator.onLine === false ? '<p class="hint">이 기기 기록과 비교했어요. 다른 기기의 새 기록은 연결 후 확인할 수 있어요.</p>' : ''}
+      <p class="hint basis">이 기기에 있는 기록과 비교했어요${when ? ` · 마지막 공유 ${when}` : ''}${navigator.onLine === false ? ' · 오프라인이라 다른 기기의 새 기록은 빠져 있을 수 있어요' : ''}</p>
       <div class="imp-tools"><button type="button" class="link" data-act="impsel" data-v="new">추가할 것만 선택</button><button type="button" class="link" data-act="impsel" data-v="none">선택 해제</button>
-        <label class="imp-bulk">결제자 <select class="in" data-input="impbulk" aria-label="선택한 건의 결제자 한꺼번에 바꾸기"><option value="">그대로</option>${payerList().map(p => `<option>${esc(p)}</option>`).join('')}</select></label></div>
+        <label class="imp-bulk">결제자 모두 <select class="in" data-input="impbulk" aria-label="모든 건의 결제자 한꺼번에 바꾸기"><option value="">그대로</option>${payerList().map(p => `<option>${esc(p)}</option>`).join('')}</select></label></div>
       ${imp.items.length ? `<div class="card import-list">${rows}</div>` : '<div class="card"><div class="empty">가져올 내역이 없어요.</div></div>'}
       ${more > 0 ? `<button type="button" class="btn ghost" data-act="impmore">${more}건 더 보기</button>` : ''}
-      ${imp.unread.length ? `<details class="source-detail unread"><summary>읽지 못한 내용 ${imp.unread.length}개</summary>${imp.unread.slice(0, 50).map(u => `<div class="unread-row"><b>${esc(u.why)}</b><pre>${esc(u.raw)}</pre></div>`).join('')}
+      ${imp.unread.length ? `<details class="source-detail unread"><summary>가져오지 못한 내용 ${imp.unread.length}개</summary>${imp.unread.slice(0, 200).map(u => `<div class="unread-row"><b>${u.line ? u.line + '번째 줄 · ' : ''}${esc(u.why)}</b><pre>${esc(u.raw)}</pre></div>`).join('')}
+        ${imp.unread.length > 200 ? `<p class="hint">외 ${imp.unread.length - 200}개는 파일에서 직접 확인해 주세요.</p>` : ''}
         <p class="hint">필요하면 기록 화면에서 직접 입력해 주세요.</p></details>` : ''}
     </div>${impFooter()}</div>`;
 }
 const refreshImpFooter = () => { const f = $('#imp-foot'); if (f) f.outerHTML = impFooter(); };
-function impApply(i) {
-  const it = imp.items[i];
-  it.amount = Number(String($('#ie-amount').value).replace(/[^\d]/g, '')) || 0;
-  it.date = $('#ie-date').value || it.date;
-  it.merchant = $('#ie-merchant').value.trim().slice(0, 60);
-  it.category = $('#ie-cat').value; it.sug = false;
-  it.payer = $('#ie-payer').value;
-  const ty = $('#ie-type [aria-pressed=true]'); if (ty) it.type = ty.dataset.v;
-  it.issues = [];
-  if (!it.amount) it.issues.push('금액을 넣어 주세요');
-  if (it.date > today()) it.issues.push('날짜를 확인해 주세요');
+// 열린 수정 칸의 값을 후보에 반영한다. 반영 못 하면(검사 실패) false
+function commitEdit() {
+  if (!imp || imp.editing < 0 || !$('#ie-amount')) return true;
+  const it = imp.items[imp.editing];
+  const next = Object.assign({}, it, {
+    amount: Number(String($('#ie-amount').value).replace(/[^\d]/g, '')) || 0,
+    date: $('#ie-date').value || '',
+    merchant: $('#ie-merchant').value.trim().slice(0, 60),
+    category: $('#ie-cat').value, payer: $('#ie-payer').value,
+    time: $('#ie-time') ? $('#ie-time').value : it.time, method: $('#ie-method') ? $('#ie-method').value : it.method,
+    note: $('#ie-note') ? $('#ie-note').value.trim().slice(0, 150) : it.note,
+  });
+  const ty = $('#ie-type [aria-pressed=true]'); if (ty) next.type = ty.dataset.v;
+  const errs = impValidate(next);
+  if (errs.length) { $('#ie-err').textContent = errs.join(' · '); return false; }
+  Object.assign(it, next, { issues: [], sug: false, edited: true });
+  if (it.payer) it.payerRaw = '';
   const keep = imp.items.map(x => x.on);
-  core.markDuplicates(imp.items, liveTxs());
+  core.markDuplicates(imp.items, liveTxs(), { batchNoTime: imp.kind === 'paste' });
   imp.items.forEach((x, k) => { x.on = keep[k]; });
-  it.on = !it.issues.length && it.dup !== 'same' && it.dup !== 'batch';
-  imp.editing = -1; renderImport();
+  it.on = it.dup !== 'same' && it.dup !== 'batch';
+  imp.editing = -1;
+  return true;
+}
+function openEditor(i) {
+  if (imp.editing === i) { imp.editing = -1; renderImport(); return; }
+  if (!commitEdit()) return;
+  imp.editing = i; renderImport();
+  const ed = $('#imp-edit'); if (ed) ed.scrollIntoView({ block: 'nearest', behavior: 'instant' });
 }
 function impSave() {
   if (imp.saving) return;
-  const sel = imp.items.filter(it => it.on && it.amount > 0);
-  if (!sel.length) return;
+  if (!commitEdit()) { const ed = $('#imp-edit'); if (ed) ed.scrollIntoView({ block: 'nearest' }); return; }
+  const blocked = imp.items.filter(it => it.on && impBlocked(it));
+  if (blocked.length) { blocked.forEach(it => { it.on = false; }); imp.err = `${blocked.length}건은 확인이 필요해 선택을 풀었어요. 눌러서 고친 뒤 저장해 주세요`; renderImport(); return; }
+  const sel = imp.items.filter(it => it.on);
+  if (!sel.length) { renderImport(); return; }
   imp.saving = true; imp.err = ''; refreshImpFooter();
-  // 저장 직전 다시 대조: 그사이 다른 기기에서 같은 기록이 들어왔으면 선택을 푼다
-  const fresh = core.markDuplicates(sel.map(it => Object.assign({}, it)), liveTxs());
-  const late = sel.filter((it, k) => fresh[k].dup === 'same' && it.dup !== 'same');
-  if (late.length) {
-    late.forEach(it => { it.on = false; it.dup = 'same'; });
-    imp.saving = false; imp.err = `${late.length}건이 방금 기록돼 있어 선택을 풀었어요. 확인 후 다시 저장해 주세요`; renderImport(); return;
-  }
-  const now = Date.now(), bene = defaultBene();
-  const recs = sel.map((it, k) => ({
-    id: it.uid, date: it.date, merchant: it.merchant, amount: it.amount, type: it.type,
-    method: it.method, category: it.category, payer: it.payer, beneficiary: bene,
-    note: [it.note, it.time, it.months ? it.months + '개월 할부' : '', it.foreign ? '해외 ' + it.foreign : ''].filter(Boolean).join(' · ').slice(0, 200),
-    refund_pending: false, created_by: S.me, created_at: now + k, updated_at: 0, deleted: false,
-  }));
-  if (!store.upsertMany(recs)) { imp.saving = false; imp.err = '기기 저장공간이 부족해 저장하지 못했어요'; refreshImpFooter(); return; }
-  const n = recs.length; imp = null;
-  $('#sheet').close(); render();
-  toast(`${n}건 기록했어요` + (navigator.onLine === false ? ' · 연결되면 공유해요' : ''));
+  // '저장 중'을 먼저 그린 뒤 처리한다
+  setTimeout(() => {
+    if (!imp || !imp.saving) return;
+    // 저장 직전 다시 대조: 그사이 다른 기기에서 같은 기록이 들어왔으면 선택을 푼다
+    const fresh = core.markDuplicates(sel.map(it => Object.assign({}, it)), liveTxs());
+    const late = sel.filter((it, k) => fresh[k].dup === 'same' && it.dup !== 'same');
+    if (late.length) {
+      late.forEach(it => { it.on = false; it.dup = 'same'; });
+      imp.saving = false; imp.err = `${late.length}건이 방금 기록돼 있어 선택을 풀었어요. 확인 후 다시 저장해 주세요`; renderImport(); return;
+    }
+    const now = Date.now(), bene = defaultBene();
+    const recs = sel.map((it, k) => ({
+      id: it.uid, date: it.date, merchant: it.merchant, amount: it.amount, type: it.type,
+      method: it.method, category: it.category, payer: it.payer, beneficiary: bene,
+      note: [it.note, it.time, it.months ? it.months + '개월 할부' : '', it.foreign ? '해외 ' + it.foreign : ''].filter(Boolean).join(' · ').slice(0, 200),
+      refund_pending: false, created_by: S.me, created_at: now + k, updated_at: 0, deleted: false,
+    }));
+    if (!store.upsertMany(recs)) { imp.saving = false; imp.err = '기기 저장공간이 부족해 저장하지 못했어요'; refreshImpFooter(); return; }
+    const n = recs.length; imp.done = true; imp = null; impPrev = null;
+    $('#sheet').close(); render();
+    toast(`${n}건을 기기에 저장했어요` + (navigator.onLine === false ? ' · 연결되면 공유해요' : ' · 공유하는 중'));
+  }, 30);
 }
 
 /* ---------------- 내역 필터 ---------------- */
@@ -1300,9 +1380,9 @@ function openListFilter(section) {
 function lfSheetHtml() {
   const f = lfDraft, cats = [...new Set([...S.settings.categories, ...liveTxs().map(t => t.category || '미분류')])];
   const r = f.period === 'cycle' ? cycleRange(f.offset) : null;
-  const range = f.period === 'all' ? null : f.period === 'custom' ? (f.from && f.to ? { start: f.from <= f.to ? f.from : f.to, end: f.from <= f.to ? f.to : f.from } : r || cycleRange(0)) : r;
+  const range = f.period === 'all' ? null : f.period === 'custom' ? (f.from && f.to ? { start: f.from, end: f.to } : cycleRange(0)) : r;
   const n = core.filterTxs(liveTxs(), f, range).length;
-  const bad = f.min && f.max && f.min > f.max;
+  const badAmt = !!(f.min && f.max && f.min > f.max), badDate = f.period === 'custom' && f.from && f.to && f.from > f.to, bad = badAmt || badDate;
   const chip = (act, v, on, label) => `<button type="button" class="chip" data-act="${act}" data-v="${esc(v)}" aria-pressed="${on}">${esc(label)}</button>`;
   return `<div class="sheet-wrap">
     <div class="sheet-h"><button type="button" data-act="close">취소</button><b id="sheet-title" tabindex="-1" autofocus>필터</b><button type="button" class="save" data-act="lfapply" ${bad ? 'disabled' : ''}>적용</button></div>
@@ -1311,22 +1391,22 @@ function lfSheetHtml() {
         <div class="seg">${[['cycle', '결제 주기'], ['all', '전체 기간'], ['custom', '직접 지정']].map(([k, l]) => `<button type="button" data-act="lfperiod" data-v="${k}" aria-pressed="${f.period === k}">${l}</button>`).join('')}</div>
         ${f.period === 'cycle' ? `<div class="cyc lf-cyc"><button type="button" data-act="lfcyc" data-v="-1" aria-label="이전 주기">${icon('left')}</button><div class="lbl"><b>${f.offset === 0 ? '이번 달' : r.year + '년'}</b>${r.label}</div><button type="button" data-act="lfcyc" data-v="1" aria-label="다음 주기" ${f.offset >= 0 ? 'disabled' : ''}>${icon('right')}</button></div>` : ''}
         ${f.period === 'custom' ? `<div class="row2 custom-dates"><label>시작일<input type="date" class="in" data-input="lffrom" value="${esc(f.from || cycleRange(0).start)}" max="${today()}"></label><label>끝일<input type="date" class="in" data-input="lfto" value="${esc(f.to || today())}" max="${today()}"></label></div>` : ''}
+        <div class="err">${badDate ? '시작일이 끝일보다 늦어요' : ''}</div>
       </section>
       <section class="filter-section" id="lf-cats"><h3>분류 <span class="h2sub">여러 개 고를 수 있어요</span></h3><div class="chips">${cats.map(c => chip('lfcat', c, f.cats.includes(c), c)).join('')}</div></section>
       <section class="filter-section" id="lf-payers"><h3>결제자</h3><div class="chips">${payerList().map(p => chip('lfpayer', p, f.payers.includes(p), p)).join('')}</div></section>
       <section class="filter-section" id="lf-amount"><h3>금액</h3><div class="row2 amt-range">
         <label>최소<span class="budget-in"><input data-money data-input="lfmin" inputmode="numeric" autocomplete="off" class="num" placeholder="제한 없음" value="${f.min ? won(f.min) : ''}"><span>원</span></span></label>
         <label>최대<span class="budget-in"><input data-money data-input="lfmax" inputmode="numeric" autocomplete="off" class="num" placeholder="제한 없음" value="${f.max ? won(f.max) : ''}"><span>원</span></span></label></div>
-        <div class="err">${bad ? '최소 금액이 최대 금액보다 커요' : ''}</div></section>
+        <div class="err">${badAmt ? '최소 금액이 최대 금액보다 커요' : ''}</div></section>
       <section class="filter-section" id="lf-kind"><h3>종류</h3><div class="chips">${KINDS.map(([k, l]) => chip('lfkind', k, f.kind === k, l)).join('')}</div></section>
     </div>
     <div class="sheet-footer lf-foot"><button type="button" class="btn ghost" data-act="lfreset">초기화</button><button type="button" class="btn" data-act="lfapply" ${bad ? 'disabled' : ''}>${n}건 보기</button></div></div>`;
 }
 const repaintLf = () => repaintSheet(lfSheetHtml());
 function applyListFilter() {
-  const q = lf.q;
   offset = lfDraft.offset; delete lfDraft.offset;
-  lf = Object.assign(lfDraft, { q }); lfDraft = null; lfLimit = 200;
+  lf = lfDraft; lfDraft = null; lfLimit = 200; calDay = '';
   if (lf.period !== 'cycle' && view.list === 'cal') view.list = 'rows';
   $('#sheet').close(); render(); scrollTo(0, 0);
 }
@@ -1347,8 +1427,8 @@ document.addEventListener('click', e => {
       openEntry(v); break;
     }
     case 'askdel': askDelete(v); break;
-    case 'close': stashDraft(); $('#sheet').close(); break;
-    case 'cyc': offset = Math.min(0, offset + Number(v)); render(); break;
+    case 'close': stashDraft(); parkImport(); $('#sheet').close(); break;
+    case 'cyc': offset = Math.min(0, offset + Number(v)); calDay = ''; render(); break;
     case 'vmode': if (view.mode === v) break; view.mode = v; hOff = 0; if (v === 'custom' && !view.from) { const r = cycleRange(0); view.from = r.start; view.to = today(); } saveView(); render(); break;
     case 'hcyc': hOff = Math.min(0, hOff + Number(v)); render(); break;
     case 'vfilter': filterSheet(v); break;
@@ -1371,33 +1451,36 @@ document.addEventListener('click', e => {
     case 'lfcyc': lfDraft.offset = Math.min(0, lfDraft.offset + Number(v)); repaintLf(); break;
     case 'lfcat': case 'lfpayer': { const k = b.dataset.act === 'lfcat' ? 'cats' : 'payers'; lfDraft[k] = lfDraft[k].includes(v) ? lfDraft[k].filter(x => x !== v) : [...lfDraft[k], v]; repaintLf(); break; }
     case 'lfkind': lfDraft.kind = v; repaintLf(); break;
-    case 'lfreset': { const o = 0; lfDraft = Object.assign(LF0(), { offset: o, q: lf.q }); repaintLf(); break; }
+    case 'lfreset': lfDraft = Object.assign(LF0(), { offset: 0 }); repaintLf(); break;
     case 'lfapply': applyListFilter(); break;
     case 'listmenu': listMenu(); break;
     /* 가져오기 */
     case 'impopen': openImport(v); break;
     case 'impfile': imp.step = 'file'; imp.err = ''; renderImport(); break;
-    case 'impback': imp.err = ''; imp.editing = -1; imp.step = imp.step === 'review' ? (imp.kind === 'paste' ? 'paste' : 'map') : 'file'; renderImport(); break;
+    case 'impback': imp.err = ''; imp.editing = -1; imp.resumed = false; imp.step = imp.step === 'review' ? (imp.kind === 'paste' ? 'paste' : 'map') : 'file'; renderImport(); break;
+    case 'impfresh': { const k = imp.kind; imp = null; impPrev = null; openImport(k); break; }
     case 'impenc': { const f = imp.file; f.enc = f.enc === 'euc-kr' ? '' : 'euc-kr'; f.sheets = [{ name: f.name, rows: core.parseCsv(core.decodeText(f.u8, f.enc || undefined)) }]; f.si = 0; setupMapping(); renderImport(); break; }
     case 'impneg': imp.file.negative = v; renderImport(); break;
     case 'impfind': {
       const f = imp.file;
       if (f.mapping.date < 0 || f.mapping.amount < 0) { imp.err = '날짜와 금액 열을 골라 주세요'; renderImport(); break; }
-      const conv = core.rowsToCandidates(f.data, f.mapping, { negative: f.negative });
+      if (imp.items.some(it => it.edited) && !confirm('확인 목록에서 고친 내용이 사라져요. 다시 찾을까요?')) break;
+      const conv = core.rowsToCandidates(f.data, f.mapping, convOpts(f));
+      if (conv.negatives && !f.negative) { imp.err = '음수 금액을 어떻게 가져올지 골라 주세요'; renderImport(); break; }
       imp.items = prepareItems(conv.items, false); imp.unread = conv.unread; imp.step = 'review'; imp.shown = IMP_PAGE; imp.editing = -1; imp.err = '';
       renderImport(); $('#sheet .sheet-b').scrollTop = 0; break;
     }
     case 'impchk': {
       const it = imp.items[Number(v)];
-      if (b.checked && !it.amount) { b.checked = false; imp.editing = Number(v); renderImport(); break; }
+      if (b.checked && impBlocked(it)) { b.checked = false; openEditor(Number(v)); break; }
       it.on = b.checked; b.closest('.import-row').classList.toggle('on', it.on); refreshImpFooter(); break;
     }
-    case 'impsel': imp.items.forEach(it => { it.on = v === 'new' ? !it.dup && !it.issues.length && it.amount > 0 : false; }); renderImport(); break;
-    case 'impedit': imp.editing = imp.editing === Number(v) ? -1 : Number(v); renderImport(); break;
+    case 'impsel': if (!commitEdit()) break; imp.items.forEach(it => { it.on = v === 'new' ? impDefaultOn(it) : false; }); imp.err = ''; renderImport(); break;
+    case 'impedit': openEditor(Number(v)); break;
     case 'impcancel': imp.editing = -1; renderImport(); break;
-    case 'impapply': impApply(Number(v)); break;
+    case 'impapply': if (commitEdit()) renderImport(); break;
     case 'ietype': setPressed(b.parentElement, v); break;
-    case 'impmore': imp.shown += IMP_PAGE; renderImport(); break;
+    case 'impmore': if (!commitEdit()) break; imp.shown += IMP_PAGE; renderImport(); break;
     case 'impsave': impSave(); break;
     /* 즐겨찾기 */
     case 'fav': applyFavorite(v); break;
@@ -1425,7 +1508,7 @@ document.addEventListener('click', e => {
     case 'rtoggle': toggleRule(v); break;
     case 'rdelete': deleteRule(); break;
     case 'disconnect':
-      if (store.pendingCount()) { toast('공유 대기 기록이 있어요. 먼저 동기화해 주세요'); break; }
+      if (store.pendingCount() || S.pendingSettings) { toast('공유 대기 기록·설정이 있어요. 먼저 동기화해 주세요'); break; }
       if (confirm('이 기기 연결을 해제할까요? 기록은 구글 시트에 남아 있어요.')) store.disconnect();
       break;
   }
@@ -1438,11 +1521,22 @@ document.addEventListener('input', e => {
     if (k === 'lfmin' || k === 'lfmax') { const n = e.target.value.replace(/[^\d]/g, '').slice(0, 10); e.target.value = n ? won(Number(n)) : ''; lfDraft[k === 'lfmin' ? 'min' : 'max'] = Number(n) || 0; }
     else if (e.target.value) lfDraft[k === 'lffrom' ? 'from' : 'to'] = e.target.value;
     const tmp = document.createElement('div'); tmp.innerHTML = lfSheetHtml();
-    ['.lf-foot', '#lf-amount .err'].forEach(sel => { const a = $('#sheet ' + sel), b2 = tmp.querySelector(sel); if (a && b2) a.outerHTML = b2.outerHTML; });
-    const sv = $('#sheet .sheet-h .save'); if (sv) sv.disabled = !!(lfDraft.min && lfDraft.max && lfDraft.min > lfDraft.max);
+    ['.lf-foot', '#lf-amount .err', '#lf-period .err'].forEach(sel => { const a = $('#sheet ' + sel), b2 = tmp.querySelector(sel); if (a && b2) a.outerHTML = b2.outerHTML; });
+    const sv = $('#sheet .sheet-h .save'); if (sv) sv.disabled = !!(lfDraft.min && lfDraft.max && lfDraft.min > lfDraft.max) || !!(lfDraft.period === 'custom' && lfDraft.from && lfDraft.to && lfDraft.from > lfDraft.to);
     return;
   }
-  if (k === 'impbulk') { if (e.target.value) { imp.items.forEach(it => { if (it.on) it.payer = e.target.value; }); renderImport(); } return; }
+  if (k === 'impbulk') {
+    if (e.target.value && commitEdit()) {
+      const p = e.target.value;
+      imp.items.forEach(it => {
+        const was = impBlocked(it);
+        it.payer = p; it.payerRaw = ''; it.issues = it.issues.filter(x => !/결제자/.test(x));
+        if (was && !impBlocked(it)) it.on = impDefaultOn(it);
+      });
+      renderImport();
+    }
+    return;
+  }
   if (k === 'vfrom' || k === 'vto') { if (e.target.value) { view[k === 'vfrom' ? 'from' : 'to'] = e.target.value; saveView(); render(); } }
   if (e.target.id === 'amount' || e.target.id === 'r-amount' || e.target.dataset.money !== undefined) {
     const n = e.target.value.replace(/[^\d]/g, '').slice(0, 10);
@@ -1479,7 +1573,7 @@ document.addEventListener('submit', e => {
     if (document.activeElement) document.activeElement.blur();
     const r = core.parseNotices(text, { today: today() });
     if (!r.items.length) { imp.err = text.trim() ? '카드 알림을 찾지 못했어요. 금액(원)이 들어 있는 알림인지 확인해 주세요' : '붙여넣은 내용이 없어요'; renderImport(); return; }
-    imp.err = ''; imp.items = prepareItems(r.items, true); imp.unread = r.unread; imp.step = 'review'; imp.editing = -1; imp.shown = IMP_PAGE;
+    imp.err = ''; imp.resumed = false; imp.items = prepareItems(r.items, true); imp.unread = r.unread; imp.step = 'review'; imp.editing = -1; imp.shown = IMP_PAGE;
     renderImport(); $('#sheet .sheet-b').scrollTop = 0; return;
   }
   if (kind === 'budget') { saveBudget(f); return; }
@@ -1522,8 +1616,8 @@ function stashDraft() {
   }
   draft = null;
 }
-$('#sheet').addEventListener('cancel', stashDraft);
-$('#sheet').addEventListener('close', () => { if (!$('#sheet').open) stashDraft(); }); // 늦게 온 close가 다시 연 창을 비우지 않게
+$('#sheet').addEventListener('cancel', () => { stashDraft(); parkImport(); });
+$('#sheet').addEventListener('close', () => { if (!$('#sheet').open) { stashDraft(); parkImport(); } }); // 늦게 온 close가 다시 연 창을 비우지 않게
 
 function exportCsv() {
   const cols = ['date', 'merchant', 'amount', 'type', 'method', 'category', 'payer', 'beneficiary', 'note', 'refund_pending', 'created_by', 'id'];

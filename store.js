@@ -90,9 +90,18 @@ const store = (() => {
     syncing = true; syncError = ''; emit('status');
     try {
       if (S.pendingSettings) {
+        const out = Object.assign({}, S.pendingSettings);
+        if (out.prefs && S.prefsDirty) {
+          // 보내기 직전 서버의 최신 prefs를 받아 그 위에 얹는다(기록은 건드리지 않는 빈 동기화)
+          const pre = await api({ action: 'sync', since: Number.MAX_SAFE_INTEGER, ops: [] });
+          S.serverPrefs = (pre.settings && pre.settings.prefs) || {};
+          const base = Object.assign({}, S.serverPrefs);
+          S.prefsDirty.forEach(k => { if (k in out.prefs) base[k] = out.prefs[k]; else delete base[k]; });
+          out.prefs = base;
+        }
         const sent = JSON.stringify(S.pendingSettings);
-        const r = await api({ action: 'settings', settings: S.pendingSettings });
-        if (JSON.stringify(S.pendingSettings) === sent) { S.settings = normSettings(r.settings); S.pendingSettings = null; }
+        const r = await api({ action: 'settings', settings: out });
+        if (JSON.stringify(S.pendingSettings) === sent) { S.settings = normSettings(r.settings); S.pendingSettings = null; S.prefsDirty = null; S.serverPrefs = r.settings.prefs || null; }
         save();
       }
       const ops = Object.values(S.outbox);
@@ -115,6 +124,7 @@ const store = (() => {
         if (!cur || r.updated_at >= cur.updated_at) S.txs[r.id] = r;
       });
       S.since = res.now; S.lastSync = Date.now();
+      S.serverPrefs = res.settings && res.settings.prefs || null;
       if (!S.pendingSettings) S.settings = normSettings(res.settings);
       save();
       if (fillPayers()) syncAgain = true;
@@ -158,16 +168,24 @@ const store = (() => {
   }
 
   /* ---------- 공유 설정 ---------- */
+  // 기기 저장에 실패하면 되돌리고 false (성공해야 화면 갱신·전송)
   function saveSettings(patch) {
+    const before = [S.settings, S.pendingSettings, S.prefsDirty];
     S.settings = Object.assign({}, S.settings, patch);
     S.pendingSettings = Object.assign({}, S.pendingSettings, patch);
-    save(); emit('change'); sync();
+    if (!save()) { [S.settings, S.pendingSettings, S.prefsDirty] = before; emit('change'); return false; }
+    emit('change'); sync();
+    return true;
   }
+  /* prefs는 서버가 통째로 바꾼다. 두 사람이 다른 항목(예: 예산과 즐겨찾기)을 거의 동시에 고쳐도 서로 지우지 않도록
+   * 이 기기에서 바꾼 키만 기억했다가, 보낼 때 마지막으로 받은 서버 prefs 위에 얹는다(같은 키를 동시에 고치면 나중 저장이 남음) */
   function setPrefs(patch) {
     if (!S.settings.prefs) { emit('notice', '서버 업데이트가 필요해요 (Apps Script 새 버전)'); return false; }
     const prefs = Object.assign({}, S.settings.prefs, patch);
     if (JSON.stringify(prefs).length > PREFS_LIMIT) { emit('notice', '공유 설정 용량이 가득 찼어요. 즐겨찾기를 조금 지워 주세요'); return false; }
-    saveSettings({ prefs });
+    const dirtyBefore = S.prefsDirty;
+    S.prefsDirty = [...new Set([...(S.prefsDirty || []), ...Object.keys(patch)])];
+    if (!saveSettings({ prefs })) { S.prefsDirty = dirtyBefore; return false; }
     return true;
   }
 
@@ -183,7 +201,7 @@ const store = (() => {
   const validUrl = url => /^(https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$|http:\/\/localhost[:/])/.test(url || '');
   function connect(cfg) { S.cfg = cfg; syncError = ''; save(); emit('change'); sync(); }
   function disconnect() {
-    if (Object.keys(S.outbox).length) return false;
+    if (Object.keys(S.outbox).length || S.pendingSettings) return false;
     localStorage.removeItem(STORE_KEY); S = blankState(); emit('change');
     return true;
   }

@@ -1012,7 +1012,7 @@ body{padding:var(--safe-t) var(--safe-r) calc(var(--nav-h) + 28px) var(--safe-l)
 .list-side,.list-main,.recur-side,.recur-main,.set-col{display:contents}
 /* 아래 탭: 좌우 safe-area 안, 알림은 탭 실제 높이(--nav-h) 위 */
 nav.tabs{left:var(--safe-l);right:var(--safe-r);max-width:560px}
-.toast{bottom:calc(var(--nav-h) + 12px)}
+.toast{bottom:calc(var(--nav-h) + 24px)} /* 기록 버튼 돌출 12 + 간격 12 */
 /* 시트 안 알림은 머리 아래: 아래 주 버튼·키보드와 겹치지 않게 */
 .toast.in-sheet{top:auto}
 /* 시트: 머리는 상태 막대 아래, 아래 버튼은 홈 막대 위. 키보드가 떠 있으면 홈 막대 여백을 뺀다 */
@@ -1023,7 +1023,7 @@ nav.tabs{left:var(--safe-l);right:var(--safe-r);max-width:560px}
 .kbd #sheet.filter-sheet .sheet-b{padding-bottom:var(--s-4)}
 /* 금액: 줄을 바꾸지 않는다. 칸이 좁거나 글자를 키우면 자릿수(--len)에 맞춰 줄인다 */
 .amount-in{container-type:inline-size}
-b.num,span.num,.num b,.fav-amt,.imp-a,.rs-v b{white-space:nowrap}
+b.num,span.num,.num b,.fav-amt,.rs-v b{white-space:nowrap}
 .settings-row>.num{flex:none}
 .fr-main b{text-overflow:ellipsis}.fr-main b>.icon{flex:none}.fr-main .muted{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .favorite-row>b.num{white-space:nowrap}
@@ -1036,7 +1036,7 @@ b.num,span.num,.num b,.fav-amt,.imp-a,.rs-v b{white-space:nowrap}
 }
 .cal-hint{text-align:center}
 /* 글자를 크게 키워도 아래 탭 글자는 1.5배까지만(아이콘이 길잡이) */
-nav.tabs button{font-size:min(.8125rem,19.5px)}
+nav.tabs button{font-size:.8125rem}
 .chip{min-width:44px}
 
 /* ---- 중간 600~840: 두 칸 ---- */
@@ -1062,7 +1062,7 @@ nav.tabs button{font-size:min(.8125rem,19.5px)}
   .home-recent .recent .swipe:nth-child(n+4){display:block}
   .home-recent .recent .swipe:nth-child(3):not(:last-child)::after{display:block}
   /* 시트: 화면 가운데 떠 있는 창(높이는 내용만큼, 키보드 위까지) */
-  #sheet,#sheet.filter-sheet{inset:var(--sheet-top) 0 auto 0;margin:0 auto;width:min(560px,calc(100% - 48px));max-width:560px;height:auto;transform:none;
+  #sheet,#sheet.filter-sheet{inset:var(--sheet-top) 0 auto 0;margin:0 auto;width:min(480px,calc(100% - 48px));max-width:480px;height:auto;transform:none;
     max-height:calc(var(--vvh,100dvh) - (var(--sheet-top) - var(--vvt,0px)) - max(24px,var(--safe-b)));border-radius:var(--r-sheet)}
   #sheet .sheet-b{flex:1 1 auto}
   .sheet-footer{padding-bottom:16px}
@@ -1071,7 +1071,7 @@ nav.tabs button{font-size:min(.8125rem,19.5px)}
   .analysis>.an-hero{margin-top:0}
 }
 /* ---- 넓음 >840: 옆 메뉴(같은 5개 목적지) + 최대 폭 ---- */
-@media (min-width:841px){
+@media (width > 840px){
   :root{--rail-w:calc(96px + var(--safe-l));--nav-h:0px}
   body{padding:var(--safe-t) var(--safe-r) calc(32px + var(--safe-b)) var(--rail-w)}
   .wrap{max-width:1120px}
@@ -1112,8 +1112,21 @@ span.num.frac{white-space:normal}.frac>span{white-space:nowrap}
 .axis{font-size:min(.6875rem,13px)}.val{font-size:min(.625rem,12px)}
 .budget-in input{width:calc(9ch + 8px);max-width:40vw}
 @media (min-width:600px){
-  .screen-list #view{grid-template-columns:minmax(340px,1fr) minmax(0,1fr)}
   .list-side .card.cal{padding:10px 6px}.list-side .cal-g{gap:2px}
+}
+/* 두 칸은 실제 쓸 수 있는 본문 폭으로 판단(옆 메뉴·노치 여백을 뺀 폭, Astra V22-15).
+   내역은 왼쪽(조건·달력 340) + 오른쪽 목록 320 + 간격 24 = 684px 이상일 때만, 다른 화면은 각 칸 252px 이상(528px)일 때만 */
+.wrap{container:page / inline-size}
+@media (min-width:600px){.screen-list #view{grid-template-columns:minmax(340px,1fr) minmax(320px,1fr)}}
+@container page (max-width:683px){
+  .screen-list #view{display:block}
+  .screen-list .list-side,.screen-list .list-main{display:contents}
+  .screen-list .list-side .results-sticky:not(.no-stick){position:sticky;margin:14px calc(-1 * var(--gutter)) 0;border:0;border-block:1px solid var(--line);border-radius:0}
+  .screen-list .list-side .results-sticky.no-stick{margin:14px calc(-1 * var(--gutter)) 0;border:0;border-block:1px solid var(--line);border-radius:0}
+}
+@container page (max-width:527px){
+  .screen-home #view,.screen-recur #view,.screen-settings #view{display:block}
+  .recur-side,.recur-main,.set-col{display:contents}
 }
 @media (max-height:500px){
   .kbd{--sheet-top:calc(var(--vvt,0px) + 8px)}
@@ -1174,12 +1187,12 @@ h2.sec{margin:24px 0 12px}
 .tx .a.ex{color:var(--amount-excluded);text-decoration:none}
 .tx .meta{font-size:var(--fs-meta);line-height:1.5;color:var(--text-3);margin-top:0}
 .tx .meta .tag{font-size:.8125rem;line-height:1.5;padding:0 8px;border-radius:var(--radius-small)}
-@container (max-width:17em){
-  .tx{grid-template-columns:38px minmax(0,1fr)}
-  .tx .ic{grid-row:1 / 4;align-self:start}
-  .tx .a{grid-column:2;grid-row:2;text-align:left}
-  .tx .meta{grid-row:3}
-}
+.tx.stack{grid-template-columns:38px minmax(0,1fr)}
+.tx.stack .ic{grid-row:1 / 4;align-self:start}
+.tx.stack .a{grid-column:2;grid-row:2;text-align:left;white-space:normal}
+.tx.stack .meta{grid-row:3}
+.won-tail{white-space:nowrap}
+.imp-top .imp-a{white-space:normal}
 .day{margin:24px 0 8px;font-size:var(--fs-meta);line-height:1.5;font-weight:600;color:var(--text-2)}
 .tag.q,.tag{color:var(--text-2)}
 /* 상태: 행은 면만, 주 버튼만 살짝 축소. 전체 어둡게(filter) 하지 않는다 */
@@ -1257,7 +1270,9 @@ nav.tabs button>span:last-child{overflow-wrap:anywhere;line-height:1.25rem}
 /* 달력: 환불은 입력 칸 클래스와 분리, 금액 약식 안내 */
 .cal-a{color:var(--text-1)}
 .cal-a.is-refund{color:var(--refund)}
-.cal-d{font-size:min(.875rem,16px)}.cal-a{font-size:min(.8125rem,14px)}.cal-w span{font-size:min(.8125rem,14px)}
+.cal-d{font-size:.875rem}.cal-a{font-size:.8125rem}.cal-w span{font-size:.8125rem}
+.cal-c{min-height:56px}
+@container (max-width:18em){.cal-mo{display:none}}
 .cal-note{margin:4px 4px 0;font-size:var(--fs-caption);line-height:1.5;color:var(--text-3)}
 .cal{container-type:inline-size}
 @container (max-width:18em){.cal-a{display:none}.cal-note::after{content:' 큰 글자에서는 선택한 날짜 아래에 금액이 나와요.'}}
@@ -1322,13 +1337,27 @@ header.top{container-type:inline-size}
 .rules-more .sum{font-size:var(--fs-meta);color:var(--text-1);font-weight:600}
 .rules-more summary .icon{width:20px;height:20px;color:var(--text-3);transition:rotate var(--motion)}
 .rules-more[open] summary .icon{rotate:180deg}
+
+/* Astra 재검토 반영 */
+html{scroll-padding-top:var(--sticky-h,0px)}
+.tbl summary{display:inline-flex;align-items:center;min-height:44px;padding:0 14px;margin-top:8px;border:1px solid var(--control);border-radius:var(--radius-control);font-size:var(--fs-meta);font-weight:600;color:var(--text-1)}
+.tbl table{margin-top:8px;font-size:var(--fs-meta)}.tbl th{text-align:left;font-weight:600;color:var(--text-2);padding:4px 0}.tbl th.num{text-align:right}
+.pace-more{margin-top:8px;border-top:1px solid var(--line)}
+.pace-more summary{display:flex;flex-direction:row;justify-content:space-between;align-items:center;min-height:44px;padding-right:0;color:var(--text-2);font-weight:600;font-size:var(--fs-meta)}
+.pace-more summary::after{content:none}
+.pace-more summary .icon{width:20px;height:20px;color:var(--text-3);transition:rotate var(--motion)}
+.pace-more[open] summary .icon{rotate:180deg}
+.pace-more .pace{border-top:0;margin-top:0;padding-top:0}
+.me-seg{width:auto;flex:1 1 148px;min-width:148px;max-width:240px;margin-left:auto}
+.me-seg button,.theme-seg button{white-space:nowrap}
+.imp-sel>input:disabled{opacity:.45;cursor:not-allowed}
 </style>
 </head>
 <body>
 <div id="app"></div>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <dialog id="sheet" aria-labelledby="sheet-title"></dialog>
-<dialog id="confirm" class="confirm" aria-label="삭제 확인"></dialog>
+<dialog id="confirm" class="confirm" aria-labelledby="confirm-title"></dialog>
 <script src="core.js"></script>
 <script src="store.js"></script>
 <script src="app.js"></script>

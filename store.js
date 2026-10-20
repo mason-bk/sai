@@ -215,7 +215,7 @@ const store = (() => {
     upsert: rec => upsertMany([rec]), upsertMany: recs => upsertMany(recs),
     remove: id => !!S.txs[id] && upsertMany([Object.assign({}, S.txs[id], { deleted: true })]),
     settings: () => S.settings, saveSettings, prefs: () => S.settings.prefs || null, setPrefs,
-    local: k => S[k], setLocal: (k, v) => { S[k] = v; return save(); },
+    local: k => S[k], setLocal: (k, v) => { const prev = S[k]; S[k] = v; if (save()) return true; S[k] = prev; return false; }, // 실패하면 메모리도 되돌림
     sync, status: () => ({ syncing, error: syncError, lastSync: S.lastSync }),
     connected: () => !!S.cfg, parseCode, validUrl, connect, disconnect,
     auth: { method: () => (S.cfg ? 'key' : 'none') },

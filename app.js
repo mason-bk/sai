@@ -23,15 +23,24 @@ const WEEK = ['일', '월', '화', '수', '목', '금', '토'];
 
 /* 알림: 일반 4초, 되돌리기 8초. 손가락·포커스가 올라가 있거나 앱이 뒤로 가 있으면 시간을 멈추고 남은 시간만 이어 간다.
  * 되돌리기 알림이 떠 있는 동안 온 일반 알림은 덮어쓰지 않고 그 뒤에 보여 준다(Astra F01). */
+// 멈춤 이유(손가락·포인터, 포커스, 앱 숨김)를 따로 세고, 첫 멈춤에서만 남은 시간을 줄이며, 이유가 모두 없어져야 다시 센다(Astra V22-11)
 let toastTimer, toastLeft = 0, toastStarted = 0, toastEl = null, toastQueue = [];
-function toastArm(ms) { clearTimeout(toastTimer); toastLeft = ms; toastStarted = Date.now(); toastTimer = setTimeout(toastHide, ms); }
-function toastPause() { if (!toastEl || !toastEl.classList.contains('on')) return; clearTimeout(toastTimer); toastLeft = Math.max(1200, toastLeft - (Date.now() - toastStarted)); toastStarted = 0; }
-function toastResume() { if (toastEl && toastEl.classList.contains('on') && !toastStarted) toastArm(toastLeft); }
+const toastHold = new Set();
+function toastArm(ms) { clearTimeout(toastTimer); toastLeft = ms; toastStarted = Date.now(); if (!toastHold.size) toastTimer = setTimeout(toastHide, ms); else toastStarted = 0; }
+function toastPause(why) {
+  if (!toastEl || !toastEl.classList.contains('on')) return;
+  if (!toastHold.size && toastStarted) { clearTimeout(toastTimer); toastLeft = Math.max(1200, toastLeft - (Date.now() - toastStarted)); toastStarted = 0; }
+  toastHold.add(why);
+}
+function toastResume(why) {
+  toastHold.delete(why);
+  if (!toastHold.size && toastEl && toastEl.classList.contains('on') && !toastStarted) { toastStarted = Date.now(); clearTimeout(toastTimer); toastTimer = setTimeout(toastHide, toastLeft); }
+}
 function toastHide() {
   if (toastEl) toastEl.classList.remove('on');
   const next = toastQueue.shift(); if (next) setTimeout(() => toast(...next), 200);
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') toastPause(); else toastResume(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') toastPause('hidden'); else toastResume('hidden'); });
 function toast(msg, action, onAction, ms) {
   // 시트(모달)가 열려 있으면 시트 안의 알림 칸에 띄운다: 모달 뒤에 가려지지 않게. 시트를 다시 그려도 새로 만든다
   const dlg = $('#sheet');
@@ -56,17 +65,19 @@ function toast(msg, action, onAction, ms) {
     t.appendChild(b);
   }
   t.classList.add('on');
-  toastArm(ms || (action ? 8000 : 4000));
-  t.onpointerenter = t.onfocusin = toastPause;
-  t.onpointerleave = t.onfocusout = toastResume;
+  toastHold.delete('hover'); toastHold.delete('focus');
+  toastArm((ms || (action ? 8000 : 4000)) + 160); // 나타나는 시간(160ms) 뒤부터 센다
+  t.onpointerenter = () => toastPause('hover'); t.onpointerleave = () => toastResume('hover');
+  t.onfocusin = () => toastPause('focus'); t.onfocusout = () => toastResume('focus');
 }
 
 /* ---------------- 삭제: 확인 창 + 되돌리기 ---------------- */
 function askDelete(id, after) {
   const t = store.get(id); if (!t) return;
   const dlg = $('#confirm');
+  dlg.setAttribute('aria-labelledby', 'confirm-title');
   dlg.innerHTML = `<div class="confirm-box" tabindex="-1" autofocus>
-    <b>이 기록을 삭제할까요?</b>
+    <b id="confirm-title">이 기록을 삭제할까요?</b>
     <p>${esc(t.merchant || t.category || '기록한 지출')} · ${won(t.amount)}원<br><span class="muted">${md(t.date)} · 두 사람의 장부에서 삭제돼요</span></p>
     <div class="confirm-btns"><button type="button" value="cancel" class="btn ghost">취소</button><button type="button" value="ok" class="btn btn-del">삭제</button></div></div>`;
   // 닫힘 이벤트 대신 버튼에서 바로 처리 (close 이벤트는 늦게 올 수 있음)
@@ -249,6 +260,7 @@ function render() {
   lastMarkup = markup;
   renderStatus();
   fitSticky();
+  fitRows();
 }
 const navBtn = (k, label, ic) => `<button data-act="tab" data-v="${k}" ${tab === k ? 'aria-current="page"' : ''}><span class="nav-icon">${icon(ic)}</span><span>${label}</span></button>`;
 const logo = () => `<svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M3 4H7Q9.25 4 11 5.5V20Q9.25 18.5 7 18.5H3Z M5 10V12H9V10Z"/><path d="M13 5.5Q14.75 4 17 4H21V18.5H17Q14.75 18.5 13 20Z M15 10V12H19V10Z"/></svg>`;
@@ -353,9 +365,16 @@ function saveView() { store.setLocal('view', view); }
 /* 금액 입력 계약(v22 P0): 원문을 지우거나 자르지 않는다. 올바른 숫자일 때만 쉼표를 넣고(커서 위치 유지), 아니면 원문+오류 */
 const WON_ERR = { over: '9,999,999,999원까지 입력할 수 있어요. 금액을 줄여 주세요', negative: '음수는 넣을 수 없어요. 환불은 종류에서 골라 주세요', decimal: '원 단위 정수로 넣어 주세요', format: '숫자만 넣어 주세요', zero: '1원 이상 넣어 주세요', empty: '금액을 입력해 주세요' };
 const groupDigits = d => d.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-function moneyInput(el) {
-  const v = el.value, r = core.parseWon(v);
-  if (/^[\d,]*$/.test(v) && v) { // 숫자·쉼표만 친 경우: 쉼표 다시 넣기
+// 쉼표를 다시 넣는 것은 (1) 숫자 키를 치거나 지운 경우(앱이 넣은 쉼표 사이에서 고친 것) (2) 이미 올바른 금액인 경우만.
+// 사용자가 직접 친 쉼표·붙여넣기·끌어넣기는 틀려도 그대로 둔다(1,23을 123으로 바꾸지 않음, Astra V22-01)
+function moneyInput(el, ev) {
+  const v = el.value, r = core.parseWon(v), it = ev && ev.inputType || '', data = ev && ev.data;
+  // 사용자가 숫자 아닌 글자(쉼표 등)를 치거나 붙여넣으면 그 칸은 '원문 모드': 비우거나 올바른 금액이 될 때까지 쉼표를 고치지 않는다
+  if (!v) delete el.dataset.raw;
+  else if ((it === 'insertText' && !/^\d+$/.test(data || '')) || /^insertFrom|^insertReplacement/.test(it)) el.dataset.raw = '1';
+  const typedDigits = !el.dataset.raw && (/^delete/.test(it) || (it === 'insertText' && /^\d+$/.test(data || '')) || (!it && /^\d+$/.test(v)));
+  const digitsOnly = v.replace(/,/g, '');
+  if (v && /^[\d,]+$/.test(v) && digitsOnly.length <= 10 && (r.ok || r.error === 'zero' || typedDigits)) {
     const caret = el.selectionStart == null ? v.length : el.selectionStart;
     const before = v.slice(0, caret).replace(/\D/g, '').length;
     const digits = v.replace(/\D/g, '').replace(/^0+(?=\d)/, '');
@@ -379,6 +398,8 @@ function koWon(n) {
   return [eok ? won(eok) + '억' : '', man ? won(man) + '만' : '', rest ? won(rest) : ''].filter(Boolean).join(' ') + '원';
 }
 // 큰 금액: 글자를 줄이지 않고, 넘치면 천 단위 쉼표 뒤에서만 줄을 바꾼다. 마지막 묶음과 '원'은 붙인다(Astra 금액 규칙)
+// 행 금액: 넘칠 때만 천 단위 쉼표 뒤에서 줄바꿈(마지막 묶음과 '원'은 붙임)
+const wonWbr = n => { const g = won(n).split(','); return g.slice(0, -1).map(x => x + ',<wbr>').join('') + `<span class="won-tail">${g[g.length - 1]}<span class="won">원</span></span>`; };
 const amt = n => {
   const t = won(n), g = t.split(',');
   return `<div class="amt num" aria-label="${t}원">${g.slice(0, -1).map(x => `<span>${x},</span><wbr>`).join('')}<span class="amt-tail">${g[g.length - 1]}<small>원</small></span></div>`;
@@ -486,8 +507,8 @@ function analysisView() {
       </div>
       ${amt(total)}
       <div class="sub"><span>${txs.length}건${spanDays > 1 ? ` · 하루 평균 ${man(Math.round(avg))}원` : ''}</span></div>
-      ${prevTotal > 0 ? `<div class="delta">${cmpName}보다 <b class="num">${won(Math.abs(diff))}원 ${diff >= 0 ? '더 썼어요' : '덜 썼어요'}</b>${prevTotal >= 10000 ? ` <span class="num">(${diff >= 0 ? '+' : '−'}${Math.abs(Math.round(diff / prevTotal * 100))}%)</span>` : ''}</div>` : `<div class="delta">${cmpName}와 비교할 기록이 없어요</div>`}
-      ${pace}
+      ${prevTxs.length ? `<div class="delta">${cmpName}보다 <b class="num">${won(Math.abs(diff))}원 ${diff >= 0 ? '더 썼어요' : '덜 썼어요'}</b>${prevTotal >= 10000 ? ` <span class="num">(${diff >= 0 ? '+' : '−'}${Math.abs(Math.round(diff / prevTotal * 100))}%)</span>` : prevTotal < 0 ? ` <span>(${cmpName} 순환불 ${won(-prevTotal)}원)</span>` : ''}</div>` : `<div class="delta">${cmpName}와 비교할 기록이 없어요</div>`}
+      ${pace ? `<details class="more pace-more" data-k="pace-more"><summary><span class="sum-wrap"><span class="sum-lab">예상·같은 시점 비교</span></span>${icon('down')}</summary>${pace}</details>` : ''}
       ${periods}
     </section>`;
 
@@ -678,6 +699,7 @@ function paceChart(r, pr, txs, prevTxs, upto) {
       <line class="xh" y1="${T}" y2="${H - B}" x1="-10" x2="-10"/>
     </svg><div class="tip" role="status"></div></div>
     <p class="hint">주기 시작(${md(r.start)})부터 같은 날짜끼리 비교해요. 누르면 그날까지 누적 금액이 보여요.</p>
+    <details class="tbl"><summary>표 보기</summary><table><thead><tr><th scope="col">날짜</th><th scope="col" class="num">${hOff === 0 ? '이번 주기' : '선택한 주기'}</th>${prev.length ? `<th scope="col" class="num">${hOff === 0 ? '지난 주기' : '그 전 주기'}</th>` : ''}</tr></thead><tbody>${pts.map(p => `<tr><td>${esc(p.label)}</td><td class="num">${p.a != null ? won(p.a) + '원' : '-'}</td>${prev.length ? `<td class="num">${p.b != null ? won(p.b) + '원' : '-'}</td>` : ''}</tr>`).join('')}</tbody></table></details>
   </div>`;
 }
 
@@ -717,7 +739,7 @@ function trendChart(r) {
       ${bars}
     </svg><div class="tip" role="status"></div></div>
     <p class="hint">${done.length ? `${u.name === '일' ? '하루' : '한 ' + u.name} 평균 ${won(Math.round(avg))}원 (지난 ${done.length}${unit === 'month' ? '개월' : u.name} 기준)` : '비교할 지난 기간이 아직 없어요'}${unit !== 'day' ? ' · 진행 중은 빗금' : ''}</p>
-    <details class="tbl"><summary>숫자로 보기</summary><table>${periods.map((p, i) => `<tr><td>${esc(p.title)} ${p.range}</td><td class="num">${won(vals[i])}원</td></tr>`).join('')}</table></details>
+    <details class="tbl"><summary>표 보기</summary><table><thead><tr><th scope="col">기간</th><th scope="col" class="num">순지출</th></tr></thead><tbody>${periods.map((p, i) => `<tr><td>${esc(p.title)} ${p.range}</td><td class="num">${won(vals[i])}원</td></tr>`).join('')}</tbody></table></details>
   </div>`;
 }
 
@@ -768,7 +790,7 @@ function txRow(t, noDate) {
     <span class="mid"><span class="m">${esc(t.merchant || t.category || '기록한 지출')}</span>
       <span class="meta">${noDate ? '' : `${d.getMonth() + 1}.${d.getDate()} · `}${esc(t.category || '미분류')} · ${esc(t.payer || '공동')} 결제
       ${t.refund_pending ? '<span class="tag">환불 대기</span>' : ''}${t.type === 'transfer' ? '<span class="tag q">지출 제외</span>' : ''}${t.created_by === '정기' ? '<span class="tag q">정기</span>' : ''}${store.isPending(t.id) ? '<span class="tag q">공유 대기</span>' : ''}</span></span>
-    <span class="a num ${cls}">${t.type === 'refund' ? '<span class="a-kind">환불</span> +' : ''}${won(t.amount)}<span class="won">원</span></span></button></div>`;
+    <span class="a num ${cls}">${t.type === 'refund' ? '<span class="a-kind">환불</span> +' : ''}${wonWbr(t.amount)}</span></button></div>`;
 }
 
 function listView() {
@@ -842,7 +864,7 @@ function calendar(r, txs) {
     const dt = parseDate(d), n = net(d), has = !!byDay[d], future = d > td;
     if (!future) { if (n > 0) spendDays++; else if (!has) zeroDays++; }
     const lvl = n > 0 ? Math.max(6, Math.round(n / max * 28)) : 0;
-    const label = (dt.getDate() === 1 || d === r.start ? (dt.getMonth() + 1) + '.' : '') + dt.getDate();
+    const label = (dt.getDate() === 1 || d === r.start ? `<span class="cal-mo">${dt.getMonth() + 1}.</span>` : '') + dt.getDate();
     cells.push(`<button class="cal-c${future ? ' fut' : ''}${d === td ? ' today' : ''}${d === calDay ? ' sel' : ''}${dt.getDay() === 0 ? ' sun' : ''}" data-act="calday" data-v="${d}" ${future ? 'disabled' : ''}
       style="${lvl ? `--lvl:${lvl}%` : ''}" aria-label="${dt.getMonth() + 1}월 ${dt.getDate()}일${dt.getDay() === 0 ? ' 일요일' : ''} ${has ? (n < 0 ? '순환불 ' + won(-n) + '원' : '순지출 ' + won(n) + '원') : future ? '' : '기록 없음'}">
       <span class="cal-d">${label}</span>${has ? `<span class="cal-a num${n < 0 ? ' is-refund' : ''}" aria-hidden="true">${n < 0 ? '+' + calAmt(-n) : n === 0 ? '0원' : calAmt(n)}</span>` : !future ? '<span class="cal-z" aria-hidden="true"></span>' : ''}</button>`);
@@ -981,7 +1003,7 @@ function recurView() {
         <span class="ic" aria-hidden="true">${categoryIcon(x.category)}</span>
         <span class="mid"><span class="m">${esc(x.name)}</span>
           <span class="meta">${ruleWhen(x)} · ${esc(x.payer || '-')} 결제${x.active ? (nx ? ' · 다음 ' + Number(nx.slice(5, 7)) + '.' + Number(nx.slice(8)) : ' · 종료') : ' · <b class="off-t">자동 기록 꺼짐</b>'}</span></span>
-        <span class="a num">${won(x.amount)}원</span></button>
+        <span class="a num">${wonWbr(x.amount)}</span></button>
         <label class="rule-sw"><input type="checkbox" data-act="rtoggle" data-v="${esc(x.id)}" ${x.active ? 'checked' : ''} aria-label="${esc(x.name)} 자동 기록"><span class="sw-t">${x.active ? '켜짐' : '꺼짐'}</span></label></div>`;
     }).join('')}</div>` : `<div class="card"><div class="empty">등록한 정기 지출이 없어요.</div><button class="btn" data-act="rule">정기 지출 추가</button></div>`}
     <details class="notice" data-k="recur-help"><summary>정해진 날 한 번 자동으로 기록돼요. <span class="link-t">자동 기록 안내</span></summary>
@@ -1081,14 +1103,15 @@ function editDirty() {
 }
 function askDiscard(onDiscard) {
   const dlg = $('#confirm');
-  dlg.innerHTML = `<div class="confirm-box" tabindex="-1" autofocus><b>수정한 내용이 있어요</b><p>닫으면 고친 내용이 사라져요.</p>
+  dlg.setAttribute('aria-labelledby', 'confirm-title');
+  dlg.innerHTML = `<div class="confirm-box" tabindex="-1" autofocus><b id="confirm-title">수정한 내용이 있어요</b><p>닫으면 고친 내용이 사라져요.</p>
     <div class="confirm-btns"><button type="button" value="keep" class="btn">계속 수정</button><button type="button" value="drop" class="btn ghost">수정 버리기</button></div></div>`;
-  dlg.querySelector('[value=keep]').onclick = () => dlg.close();
+  dlg.querySelector('[value=keep]').onclick = () => { dlg.close(); const a = $('#amount'); if (a) a.focus(); };
   dlg.querySelector('[value=drop]').onclick = () => { dlg.close(); onDiscard(); };
   dlg.oncancel = null;
   dlg.showModal();
 }
-function closeSheet() { stashDraft(); parkImport(); $('#sheet').close(); }
+function closeSheet() { if (!stashDraft()) return false; parkImport(); $('#sheet').close(); return true; }
 function merchantStats() {
   const since = ymd(new Date(Date.now() - 120 * 864e5));
   const m = {};
@@ -1273,7 +1296,7 @@ function favButton() {
 
 /* 즐겨찾기로 기록: 누르면 오늘 날짜로 바로 저장, 8초 되돌리기 (Astra 디자인 방향) */
 function openFavList() {
-  if ($('[data-form=entry]')) stashDraft();
+  if ($('[data-form=entry]') && !stashDraft()) return;
   const list = favorites();
   showSheet(`<div class="sheet-wrap">${sheetHead('즐겨찾기로 기록')}
     <div class="sheet-b">
@@ -1337,7 +1360,7 @@ function loadXlsx() {
   }));
 }
 function openImport(kind) {
-  if ($('[data-form=entry]')) stashDraft();
+  if ($('[data-form=entry]') && !stashDraft()) return;
   // 저장하지 않고 닫은 확인 목록은 앱을 끄기 전까지 이어서 볼 수 있다(원문·파일은 기기 저장소에 남기지 않음)
   if (impPrev && impPrev.kind === kind && impPrev.items.length) { imp = impPrev; imp.resumed = true; imp.saving = false; }
   else imp = { kind, step: kind, text: '', items: [], unread: [], editing: -1, shown: IMP_PAGE, file: null, err: '', saving: false };
@@ -1431,7 +1454,7 @@ function mapHtml() {
   const needNeg = conv && conv.negatives && !f.negative;
   const ready = conv && f.mapping.date >= 0 && f.mapping.amount >= 0 && conv.items.length && !needNeg;
   const isCsv = f.sheets.length === 1 && !/\.(xlsx|xls|xlsm)$/i.test(f.name);
-  return `<div class="sheet-wrap">${impHead('파일 항목 확인', true)}
+  return `<div class="sheet-wrap">${impHead('빠진 기록 가져오기', true)}
     <div class="sheet-b">
       <div class="file-line"><span>${icon('file')}<b>${esc(f.name)}</b> <span class="muted">${f.data.length.toLocaleString('ko-KR')}줄</span></span><button type="button" class="link" data-act="impfile">다른 파일</button></div>
       ${f.over ? `<p class="err" role="alert">5,000줄이 넘어요(${f.data.length.toLocaleString('ko-KR')}줄). 카드사에서 기간을 나눠 내려받아 주세요.</p>` : ''}
@@ -1448,7 +1471,7 @@ function mapHtml() {
       ${conv ? `<p class="hint">${conv.items.length}건 읽음${conv.unread.length ? ` · ${conv.unread.length}줄은 가져올 수 없어요(다음 화면에서 이유 확인)` : ''}</p>` : ''}
       <details class="more map-more" data-k="map-more"><summary><span class="sum-wrap"><span class="sum-lab">더 연결하기</span><span class="sum">시각·종류·통화·분류·결제자·결제수단·메모·할부</span></span>${icon('down')}</summary><div class="column-map">${ROLES.slice(3).map(sel).join('')}</div></details>
     </div>
-    <div class="sheet-footer">${needNeg && !imp.err ? '<p class="foot-hint">음수 금액을 어떻게 기록할지 선택해 주세요</p>' : ''}<div class="err" id="imp-err" role="alert">${esc(imp.err)}</div>
+    <div class="sheet-footer"><div class="err" id="imp-err" role="alert">${esc(imp.err)}</div>
       ${needNeg ? '<button type="button" class="btn" data-act="impgoneg">음수 금액 처리 선택</button>' : `<button type="button" class="btn" data-act="impfind" ${ready ? '' : 'disabled'}>확인 목록 보기</button>`}</div></div>`;
 }
 
@@ -1516,9 +1539,9 @@ function impRow(it, i) {
   const match = m ? `<span class="imp-match">기록: ${parseDate(m.date).getFullYear() !== new Date().getFullYear() ? m.date.slice(0, 4) + '.' : ''}${md(m.date)} ${esc(m.merchant || '거래처 없음')} ${won(m.amount)}원</span>` : '';
   const editing = imp.editing === i, blocked = impBlocked(it), name = esc(it.merchant || '거래처 없음');
   return `<div class="import-row${it.on ? ' on' : ''}${it.dup ? ' is-dup' : ''}${editing ? ' is-editing' : ''}${blocked ? ' is-blocked' : ''}" data-i="${i}">
-    <label class="imp-sel" for="impchk-${i}"><input type="checkbox" id="impchk-${i}" data-act="impchk" data-v="${i}" ${it.on ? 'checked' : ''} ${blocked ? `aria-disabled="true" aria-describedby="impwhy-${i}"` : ''} aria-label="${name} ${it.amount ? won(it.amount) + '원' : '금액 없음'} 기록하기"></label>
+    <label class="imp-sel" for="impchk-${i}"><input type="checkbox" id="impchk-${i}" data-act="impchk" data-v="${i}" ${it.on ? 'checked' : ''} ${blocked ? `disabled aria-describedby="impwhy-${i}"` : ''} aria-label="${name} ${it.amount ? won(it.amount) + '원' : '금액 없음'} 기록하기"></label>
     <div class="imp-body">
-      <label class="imp-top" for="impchk-${i}"><span class="imp-m">${name}</span><span class="imp-a num${it.type === 'refund' ? ' ref' : it.type === 'transfer' ? ' ex' : ''}">${it.type === 'refund' ? '환불 +' : ''}${it.amount ? won(it.amount) + '원' : '금액 없음'}</span></label>
+      <label class="imp-top" for="impchk-${i}"><span class="imp-m">${name}</span><span class="imp-a num${it.type === 'refund' ? ' ref' : it.type === 'transfer' ? ' ex' : ''}">${it.type === 'refund' ? '환불 +' : ''}${it.amount ? wonWbr(it.amount) : '금액 없음'}</span></label>
       <span class="imp-meta">${impDate(it)}${it.time ? ' ' + it.time : ''}</span>
       ${impTags(it) ? `<span class="imp-tags">${impTags(it)}</span>` : ''}${match}
       <span class="imp-act"><span class="imp-last"><span class="imp-meta">${esc(it.category || '미분류')}${it.sug ? ' <span class="muted">(추천)</span>' : ''} · ${it.payer ? esc(it.payer) + ' 결제' : '결제자 미정'}</span>${blocked ? `<span class="imp-edit-hint" id="impwhy-${i}">${impWhy(it)}</span>` : ''}</span><button type="button" class="imp-edit-btn" data-act="impedit" data-v="${i}" aria-expanded="${editing}" aria-label="${name} ${editing ? '수정 닫기' : '수정'}">${editing ? '닫기' : '수정'}</button></span>
@@ -1557,7 +1580,7 @@ function reviewHtml() {
   const rows = imp.items.slice(0, imp.shown).map(impRow).join('');
   const more = imp.items.length - imp.shown;
   const when = st.lastSync ? new Date(st.lastSync).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' }) : '';
-  return `<div class="sheet-wrap">${impHead(file ? '빠진 기록 확인' : '알림 확인', true)}
+  return `<div class="sheet-wrap">${impHead(file ? '빠진 기록 가져오기' : '알림 붙여넣기', true)}
     <div class="sheet-b">
       ${imp.resumed ? `<p class="resume-line">아까 확인하던 목록이에요. <button type="button" class="link" data-act="impfresh">새로 시작</button></p>` : ''}
       <div class="import-summary" role="status"><span><b class="num">${c.fresh}</b> ${file ? '빠진 기록' : '새 기록'}</span><span><b class="num">${c.dup}</b> 이미 있음</span><span${c.check ? ' class="warn"' : ''}><b class="num">${c.check}</b> 확인 필요</span></div>
@@ -1775,7 +1798,7 @@ document.addEventListener('click', e => {
     }
     case 'impchk': {
       const it = imp.items[Number(v)];
-      if (b.checked && impBlocked(it)) { b.checked = false; openEditor(Number(v)); break; }
+      if (b.checked && impBlocked(it)) { b.checked = false; break; } // 선택 불가(체크 비활성) — 고치는 건 '수정' 버튼으로
       it.on = b.checked; b.closest('.import-row').classList.toggle('on', it.on); refreshImpFooter(); break;
     }
     case 'impsel': if (!commitEdit()) break; imp.items.forEach(it => { it.on = v === 'new' ? impDefaultOn(it) : false; }); imp.err = ''; renderImport(); break;
@@ -1792,7 +1815,7 @@ document.addEventListener('click', e => {
       else { const gone = favorites().find(f => f.id === v); const ok = removeFavorite(v, true); favUndo = ok ? gone : null; openFavManage(ok ? `${esc(gone.merchant)} 즐겨찾기를 지웠어요. <button type="button" class="link" data-act="favundo">되돌리기</button>` : '즐겨찾기를 지우지 못했어요'); }
       break;
     case 'favundo': if (favUndo && !favorites().some(f => f.id === favUndo.id)) store.setPrefs({ favorites: favorites().concat(favUndo) }); favUndo = null; openFavManage('되돌렸어요'); break;
-    case 'favmanage': stashDraft(); openFavManage(); break;
+    case 'favmanage': if (!stashDraft()) break; openFavManage(); break;
     case 'me': store.setLocal('me', v); render(); break;
     case 'sync': sync(); break;
     case 'merchant': $('#merchant').value = v; draft.merchant = v; suggestFor(v); break;
@@ -1802,7 +1825,7 @@ document.addEventListener('click', e => {
       { const id = draft.id; askDelete(id, () => { saved = true; $('#sheet').close(); }); }
       break;
     case 'csv': exportCsv(); break;
-    case 'update': if (!verRunning) { verCheckedAt = 0; checkUpdate(true); } else applyUpdate(); break;
+    case 'update': if (verFailed || verSlow || !verLatest) { verCheckedAt = 0; checkUpdate(true); } else applyUpdate(); break;
     case 'rule': openRule(v); break;
     case 'budget': openBudget(); break;
     case 'lmode': view.list = v; calDay = ''; saveView(); render(); break;
@@ -1822,7 +1845,7 @@ document.addEventListener('input', e => {
   if (k === 'q') { lf.q = e.target.value; lfLimit = 200; clearTimeout(qTimer); if (!e.isComposing) qTimer = setTimeout(render, 150); }
   if (k === 'lfmin' || k === 'lfmax' || k === 'lffrom' || k === 'lfto') {
     if (k === 'lfmin' || k === 'lfmax') {
-      moneyInput(e.target); const r = core.parseWon(e.target.value), key = k === 'lfmin' ? 'min' : 'max';
+      moneyInput(e.target, e); const r = core.parseWon(e.target.value), key = k === 'lfmin' ? 'min' : 'max';
       lfDraft[key] = r.ok ? r.value : 0; lfDraft[key + 'Text'] = e.target.value; lfDraft[key + 'Bad'] = !r.ok && r.error !== 'empty' ? WON_ERR[r.error] : '';
     }
     else if (e.target.value) lfDraft[k === 'lffrom' ? 'from' : 'to'] = e.target.value;
@@ -1844,7 +1867,7 @@ document.addEventListener('input', e => {
   }
   if (k === 'vfrom' || k === 'vto') { if (e.target.value) { view[k === 'vfrom' ? 'from' : 'to'] = e.target.value; saveView(); render(); } }
   if (e.target.id === 'amount' || e.target.id === 'r-amount' || e.target.dataset.money !== undefined) {
-    const msg = moneyInput(e.target);
+    const msg = moneyInput(e.target, e);
     const err = $(e.target.id === 'amount' ? '#entry-err' : e.target.id === 'r-amount' ? '#rule-err' : e.target.id === 'ie-amount' ? '#ie-err' : e.target.closest('[data-form=budget]') ? '#budget-err' : '#none');
     if (err) err.textContent = msg;
   }
@@ -1920,17 +1943,25 @@ document.addEventListener('submit', e => {
   }
 });
 // 저장하지 않고 닫은 새 기록은 초안으로 보관 (다음에 + 누르면 이어서)
+// 저장하지 못하면 false: 닫지 않고 이유를 남긴다(Astra V22-04). 잘못된 금액 원문만 있어도 초안으로 남긴다
 function stashDraft() {
   const f = $('[data-form=entry]');
   if (!saved && !editing && draft && f) {
     readEntry(f);
-    store.setLocal('draft', (draft.amount || draft.merchant || draft.note) ? draft : null);
+    const has = draft.amount || (draft.amountText || '').trim() || draft.merchant || draft.note;
+    if (!has) store.setLocal('draft', null); // 비울 때 실패는 닫기를 막지 않는다
+    else if (!store.setLocal('draft', draft)) {
+      const fe = $('#entry-foot-err'); if (fe) fe.textContent = '작성 중인 내용을 기기에 남기지 못했어요. 기록하거나 내용을 지운 뒤 닫아 주세요';
+      return false;
+    }
   }
   draft = null;
+  return true;
 }
 $('#sheet').addEventListener('cancel', e => {
   if (editDirty()) { e.preventDefault(); askDiscard(() => { saved = true; closeSheet(); }); return; }
-  stashDraft(); parkImport();
+  if (!stashDraft()) { e.preventDefault(); return; }
+  parkImport();
 });
 $('#sheet').addEventListener('close', () => { if (!$('#sheet').open) { stashDraft(); parkImport(); } }); // 늦게 온 close가 다시 연 창을 비우지 않게
 
@@ -1955,7 +1986,7 @@ function vvFit(h, top) {
   root.style.setProperty('--vvt', top + 'px');
   const kb = innerHeight - h > 120;
   if (root.classList.contains('kbd') !== kb) root.classList.toggle('kbd', kb);
-  fitSheet();
+  fitSheet(); fitSticky();
   const a = document.activeElement;
   if (kb && a && a.closest && a.closest('#sheet') && a.matches('input,select,textarea')) requestAnimationFrame(() => revealField(a, 'instant'));
 }
@@ -1972,10 +2003,42 @@ function fitSheet() {
   if (b && b.clientHeight < 160 && dlg.querySelector('.sheet-footer')) dlg.classList.add('tight');
 }
 // 결과 합계 줄이 화면 높이의 25%를 넘으면(큰 글자) 붙어 있지 않게 한다(Astra L03)
+// 거래 행: 금액이 내용 폭의 45%를 넘거나 거래처에 8글자(8em)를 못 주면 금액을 거래처 아래 줄로(Astra X02·V22-05)
+function fitRows() {
+  const rows = [...document.querySelectorAll('#app .tx, #sheet .tx')];
+  const want = rows.map(row => {
+    const a = row.querySelector('.a'); if (!a || !row.clientWidth) return null;
+    const fs = parseFloat(getComputedStyle(row).fontSize) || 16, ic = row.querySelector('.ic');
+    const content = row.clientWidth - (ic ? ic.offsetWidth : 38) - 12;
+    const rg = document.createRange(); rg.selectNodeContents(a); // 줄이 나뉘어 있어도 글자 전체 폭(조각 폭 합)
+    const aw = [...rg.getClientRects()].reduce((w, r) => w + r.width, 0);
+    return aw > content * .45 || content - aw - 12 < 8 * fs;
+  });
+  rows.forEach((row, i) => { if (want[i] !== null && row.classList.contains('stack') !== want[i]) row.classList.toggle('stack', want[i]); });
+}
+addEventListener('resize', () => fitRows());
 function fitSticky() {
-  const el = document.querySelector('.results-sticky'); if (!el) return;
-  const vh = window.visualViewport ? visualViewport.height : innerHeight;
-  el.classList.toggle('no-stick', el.getBoundingClientRect().height > vh * .25);
+  const el = document.querySelector('.results-sticky');
+  const root = document.documentElement;
+  if (!el) { root.style.setProperty('--sticky-h', '0px'); return; }
+  const vh = window.visualViewport ? visualViewport.height : innerHeight, h = el.getBoundingClientRect().height;
+  const off = h > vh * .25;
+  if (el.classList.contains('no-stick') !== off) el.classList.toggle('no-stick', off);
+  // 붙어 있는 합계 줄 아래로 포커스가 숨지 않게(실제 높이 + 12px)
+  root.style.setProperty('--sticky-h', off || getComputedStyle(el).position !== 'sticky' ? '0px' : Math.round(h + 12) + 'px');
+}
+// 시트 아래 버튼·본문 크기가 바뀌면(오류 줄 추가, 글자 크기, 내용 교체) 좁은 시트 판정과 시트 안 알림 위치를 다시 잰다(Astra V22-07)
+if (window.ResizeObserver) {
+  const sheetRO = new ResizeObserver(() => {
+    fitSheet();
+    const t = document.querySelector('#sheet .toast.in-sheet'), f = document.querySelector('#sheet .sheet-footer');
+    if (t) t.style.bottom = (f ? f.getBoundingClientRect().height : 0) + 12 + 'px';
+  });
+  const watchSheet = () => { const d = $('#sheet'); sheetRO.disconnect(); sheetRO.observe(d); d.querySelectorAll('.sheet-footer,.sheet-b').forEach(e => sheetRO.observe(e)); };
+  new MutationObserver(watchSheet).observe($('#sheet'), { childList: true, subtree: true, attributes: true, attributeFilter: ['open'] });
+  const stickyRO = new ResizeObserver(() => fitSticky());
+  new MutationObserver(() => { const el = document.querySelector('.results-sticky'); stickyRO.disconnect(); if (el) stickyRO.observe(el); }).observe($('#app'), { childList: true, subtree: true });
+  addEventListener('resize', fitSticky);
 }
 window.__vvFit = vvFit; // 레이아웃 점검(layout-matrix)이 키보드를 흉내 낼 때 쓴다
 if (window.visualViewport) {
@@ -1997,11 +2060,16 @@ if (window.ResizeObserver) {
 /* ---------------- 앱 업데이트 ---------------- */
 // 버전 = sw.js의 CACHE 이름. 이 화면을 연 시점의 버전과 지금 서버의 sw.js를 비교한다.
 let verRunning = '', verLatest = '', verCheckedAt = 0;
-let verFailed = false, verSlow = false;
+// 실행 중 버전 = 이 화면을 연 서비스 워커의 캐시 이름(없으면 첫 조회값), 서버 버전 = 지금 sw.js. 실패·지연은 버전보다 먼저 보인다(Astra V22-10)
+let verFailed = false, verSlow = false, verOkAt = 0;
+if (window.caches && caches.keys) caches.keys().then(ks => { const k = ks.find(x => /^sai-shell-/.test(x)); if (k && !verRunning) { verRunning = k.replace('sai-shell-', ''); const el = $('#ver'); if (el) el.textContent = verText(); } }).catch(() => {});
 function verText() {
-  if (!verRunning) return verFailed ? '버전을 확인하지 못했어요 · 눌러서 다시 확인' : verSlow ? '확인이 오래 걸려요 · 눌러서 다시 확인' : '버전 확인 중';
-  const when = verCheckedAt ? ' · ' + new Date(verCheckedAt).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' }) + ' 확인' : '';
-  return '현재 ' + verRunning + (verLatest !== verRunning ? ' · 새 버전이 있어요 (' + verLatest + ') · 업데이트하기' : ' · 최신 버전이에요' + when);
+  const cur = verRunning ? '현재 ' + verRunning : '현재 버전 확인 중';
+  const last = verOkAt ? ' · 마지막 확인 ' + new Date(verOkAt).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' }) : '';
+  if (verFailed) return cur + ' · 최신 버전을 확인하지 못했어요' + last + ' · 눌러서 다시 확인';
+  if (verSlow) return cur + ' · 확인이 오래 걸려요 · 눌러서 다시 확인';
+  if (!verLatest) return cur;
+  return cur + (verLatest !== verRunning ? ' · 새 버전이 있어요 (' + verLatest + ') · 눌러서 업데이트' : ' · 최신 버전이에요' + last);
 }
 async function checkUpdate(force) {
   if (!force && Date.now() - verCheckedAt < 5 * 60e3) return verLatest !== verRunning;
@@ -2012,7 +2080,7 @@ async function checkUpdate(force) {
     const src = await (await fetch('sw.js?t=' + Date.now(), { cache: 'no-store', signal: ctrl.signal })).text();
     clearTimeout(kill);
     const v = (src.match(/sai-shell-([\w.-]+)/) || [])[1];
-    if (v) { verLatest = v; if (!verRunning) verRunning = v; } else verFailed = true;
+    if (v) { verLatest = v; verOkAt = Date.now(); if (!verRunning) verRunning = v; } else { verFailed = true; verCheckedAt = 0; }
   } catch (e) { verFailed = true; verCheckedAt = 0; }
   clearTimeout(slow);
   { const el = $('#ver'); if (el) el.textContent = verText(); }

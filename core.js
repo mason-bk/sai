@@ -3,7 +3,7 @@
  * 순수 로직 (core) - 화면·저장소·네트워크에 의존하지 않는다.
  * 브라우저에서는 window.core, Node·다른 앱(iOS·Android 정식 앱 등)에서는 require('./core.js').
  *
- *   날짜·주기    ymd, parseDate, addDays, dayDiff, cycleRange(startDay, offset, now)
+ *   날짜·주기    ymd, parseDate, addDays, dayDiff, cycleRange(startDay, offset, now), shortWon(달력 약식 금액)
  *   금액         signed(tx), parseAmount(text)
  *   카드 알림    parseNotices(text, { today }) → { items, unread }
  *   추천         suggest(merchant, history, settings, text) → { category, payer, method }
@@ -512,6 +512,7 @@
       if (range && (t.date < range.start || t.date > range.end)) return false;
       if (f.cats && f.cats.length && !f.cats.includes(t.category || '미분류')) return false;
       if (f.payers && f.payers.length && !f.payers.includes(t.payer || '공동')) return false;
+      if (f.methods && f.methods.length && !f.methods.includes(t.method || '미지정')) return false; // v23: 결제수단(카드별 명세서와 맞춰 보기)
       if (min && t.amount < min) return false;
       if (max && t.amount > max) return false;
       if (f.kind === 'refund_pending' && !t.refund_pending) return false;
@@ -520,6 +521,17 @@
       return true;
     });
   }
+  /* 달력 칸용 약식 금액(v23, Astra calendar-spec 5절): 부호 없이 절댓값, 실제보다 크게 보이지 않게 내림.
+     1~9,999 쉼표 / 1만~10만 미만 소수 한 자리 만 / 10만~1억 미만 만 / 1억~10억 미만 소수 한 자리 억 / 10억 이상 억 / 1천억 이상 999억+ */
+  function shortWon(n) {
+    const a = Math.abs(Math.trunc(Number(n) || 0)), f = (x, d) => String(Math.floor(x / d * 10) / 10).replace(/\.0$/, '');
+    if (a < 1e4) return a.toLocaleString('en-US');
+    if (a < 1e5) return f(a, 1e4) + '만';
+    if (a < 1e8) return Math.floor(a / 1e4) + '만';
+    if (a < 1e9) return f(a, 1e8) + '억';
+    if (a < 1e11) return Math.floor(a / 1e8) + '억';
+    return '999억+';
+  }
   function summarize(txs) {
     const s = { count: txs.length, net: 0, expense: 0, refund: 0, transfer: 0 };
     txs.forEach(t => { s.net += signed(t); s[t.type === 'refund' ? 'refund' : t.type === 'transfer' ? 'transfer' : 'expense'] += t.amount; });
@@ -527,7 +539,7 @@
   }
 
   const core = {
-    pad, ymd, parseDate, addDays, dayDiff, cycleRange, signed, parseAmount, parseWon, validWon, MAX_WON, normMerchant, merchantMatch,
+    pad, ymd, parseDate, addDays, dayDiff, cycleRange, signed, shortWon, parseAmount, parseWon, validWon, MAX_WON, normMerchant, merchantMatch,
     splitNotices, parseNotices, suggest, makeSuggester, markDuplicates, typeOf,
     decodeText, parseCsv, detectHeaderRow, guessColumns, toDate, rowsToCandidates,
     filterTxs, summarize,

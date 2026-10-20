@@ -147,7 +147,7 @@
     const fx = text.match(FOREIGN);
     if (!amts.length && !fx) return { unread: '금액을 찾지 못했어요' };
     // '취소가능'·'취소 시' 같은 안내 문구는 취소가 아니다
-    const cancel = /취소(?!\s*(가능|시|하려면|문의|안내))|환불/.test(text);
+    const cancel = /(취소|환불)(?!\s*(가능|시|하려면|문의|안내|아님|안\s*함|없음|불가))/.test(text);
     const item = { amount: amts.length ? amts[0].n : 0, type: cancel ? 'refund' : 'expense', issues: [] };
     if (new Set(amts.map(a => a.n)).size > 1) item.issues.push('금액이 여러 개예요. 확인해 주세요');
     if (!cancel && !/승인|결제|사용|이용|출금|일시불|할부|체크|카드|card/i.test(text)) item.issues.push('결제 알림이 맞는지 확인해 주세요');
@@ -385,7 +385,8 @@
   function typeOf(text, header) {
     const t = String(text == null ? '' : text).trim();
     if (!t) return '';
-    if (/취소\s*(아님|안\s*함|없음|불가|가능)/.test(t)) return 'expense';
+    if (/(취소|환불)\s*(아님|안\s*함|없음|불가|가능)/.test(t)) return 'expense';
+    if (/거절|실패|반려/.test(t)) return 'declined';
     if (/취소/.test(header || '') && /^(y|yes|o|예|네|1|true)$/i.test(t)) return 'refund';
     if (/취소/.test(header || '') && /^(n|no|x|아니오|아니요|0|false|-)$/i.test(t)) return 'expense';
     if (/취소|환불|반품|refund|cancel|reversal/i.test(t)) return 'refund';
@@ -422,6 +423,7 @@
       const typeText = String(get(r, 'type') || '').trim();
       const named = typeOf(typeText, typeHeader);
       if (named === 'income') { unread.push({ raw, why: '수입은 가져오지 않아요', line }); return; }
+      if (named === 'declined') { unread.push({ raw, why: '거절된 결제라 가져오지 않아요', line }); return; }
       const issues = [];
       let type = named === 'refund' || named === 'transfer' ? named : 'expense';
       if (named === 'unknown') issues.push(`종류를 확인해 주세요 (${typeText.slice(0, 12)})`);
@@ -435,8 +437,13 @@
       }
       const item = { date, amount, merchant: merchant.slice(0, 60), type, issues, line, raw };
       // 통화 열이 원화가 아니면 금액을 원화로 쓰지 않는다
+      // 고른 금액 열이 원화 환산 열(이름에 원화·KRW·(원))이면 통화 열은 참고로만 남긴다
       const cur = mapping.currency >= 0 ? String(get(r, 'currency') || '').trim() : '';
-      if (cur && !/^(krw|원|₩|won)$/i.test(cur)) { item.foreign = cur.toUpperCase() + ' ' + amount; item.amount = 0; issues.push('원화 금액을 넣어 주세요'); }
+      const amountIsKrw = /원화|krw|\(원\)|원\)$/i.test(o.header && mapping.amount >= 0 ? String(o.header[mapping.amount] || '') : '');
+      if (cur && !/^(krw|원|₩|won)$/i.test(cur)) {
+        if (amountIsKrw) item.foreign = cur.toUpperCase();
+        else { item.foreign = cur.toUpperCase() + ' ' + amount; item.amount = 0; issues.push('원화 금액을 넣어 주세요'); }
+      }
       if (date > o.today) issues.push('미래 날짜예요. 확인해 주세요');
       const time = mapping.time >= 0 ? timeOf(get(r, 'time')) : '';
       if (time) item.time = time;

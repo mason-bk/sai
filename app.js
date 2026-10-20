@@ -718,7 +718,7 @@ function calendar(r, txs) {
     <div class="cal-g cal-w">${WEEK.map(w => `<span>${w}</span>`).join('')}</div>
     <div class="cal-g">${cells.join('')}</div>
     <p class="cal-legend"><span>지출한 날 ${spendDays}일</span><span><i class="cal-z"></i> 지출 없는 날 ${zeroDays}일</span></p></div>
-    ${calDay ? `<p class="day" data-ui-key="calsel">${md(calDay)} ${WEEK[parseDate(calDay).getDay()]}요일</p>${sel ? `<div class="card" data-ui-key="calrows">${sel.map(txRow).join('')}</div>` : '<div class="card"><div class="empty">이날은 지출이 없어요.</div></div>'}`
+    ${calDay ? `<p class="day" data-ui-key="calsel">${md(calDay)} ${WEEK[parseDate(calDay).getDay()]}요일${sel ? ` · ${sel.length}건 · 순지출 ${won(sum(sel))}원` : ''}</p>${sel ? `<div class="card" data-ui-key="calrows">${sel.map(txRow).join('')}</div>` : '<div class="card"><div class="empty">이날은 지출이 없어요.</div></div>'}`
       : '<p class="hint" style="text-align:center">날짜를 누르면 그날 기록을 보여줘요.</p>'}`;
 }
 
@@ -1020,8 +1020,17 @@ function addFavorite() {
 function removeFavorite(id, silent) {
   const list = favorites(), gone = list.find(f => f.id === id);
   if (!gone || !store.setPrefs({ favorites: list.filter(f => f.id !== id) })) return false;
-  if (!silent) toast('즐겨찾기만 삭제했어요', '되돌리기', () => { if (!favorites().some(f => f.id === id)) store.setPrefs({ favorites: favorites().concat(gone) }); });
+  if (!silent) toast('즐겨찾기만 삭제했어요(두 사람 모두에게서)', '되돌리기', () => { if (!favorites().some(f => f.id === id)) store.setPrefs({ favorites: favorites().concat(gone) }); });
   return true;
+}
+// 수정 화면에서 금액·거래처·분류·결제자·종류를 바꾸면 즐겨찾기 버튼도 지금 값 기준으로
+function refreshFavButton() {
+  const box = $('.fav-field'), f = $('[data-form=entry]');
+  if (!box || !f || !draft) return;
+  readEntry(f);
+  const b = box.querySelector('.btn');
+  if (draft.type !== 'expense') { box.hidden = true; return; }
+  box.hidden = false; if (b) b.outerHTML = favButton();
 }
 function favButton() {
   const cur = draft && favorites().find(f => favKey(f) === favKey(draft));
@@ -1178,7 +1187,7 @@ function mapHtml() {
         <p class="hint">카드 이용내역의 음수는 보통 취소(환불), 다른 가계부는 보통 지출이에요.</p></div>` : ''}
       <h2 class="map-h">미리보기 <span class="h2sub">앞쪽 원본 3줄</span></h2>
       <div class="card file-preview">${pv.map(({ r, it, why }) => `<div class="pv-row"><span class="pv-src">${esc(r.filter(v => v !== '' && v != null).join(' · ').slice(0, 70))}</span>
-        ${it ? `<span class="pv-out"><span>→ ${md(it.date)}${it.time ? ' ' + it.time : ''} · ${esc(it.merchant || '거래처 없음')}</span><b class="num${it.type === 'refund' ? ' ref' : ''}">${it.type === 'refund' ? '환불 ' : it.type === 'transfer' ? '제외 ' : ''}${it.amount ? won(it.amount) + '원' : esc(it.foreign || '금액 없음')}</b></span>` : `<span class="pv-out pv-bad">→ ${esc(why || (f.mapping.date < 0 ? '날짜 열을 골라 주세요' : f.mapping.amount < 0 ? '금액 열을 골라 주세요' : '이 줄은 건너뛰어요'))}</span>`}</div>`).join('') || '<div class="empty">내용이 없어요</div>'}</div>
+        ${it ? `<span class="pv-out"><span>→ ${it.date.slice(0, 4) !== String(new Date().getFullYear()) ? it.date.slice(0, 4) + '.' : ''}${md(it.date)}${it.time ? ' ' + it.time : ''} · ${esc(it.merchant || '거래처 없음')}</span><b class="num${it.type === 'refund' ? ' ref' : ''}">${it.type === 'refund' ? '환불 ' : it.type === 'transfer' ? '제외 ' : ''}${it.amount ? won(it.amount) + '원' : esc(it.foreign || '금액 없음')}</b></span>` : `<span class="pv-out pv-bad">→ ${esc(why || (f.mapping.date < 0 ? '날짜 열을 골라 주세요' : f.mapping.amount < 0 ? '금액 열을 골라 주세요' : '이 줄은 건너뛰어요'))}</span>`}</div>`).join('') || '<div class="empty">내용이 없어요</div>'}</div>
       ${conv ? `<p class="hint">${conv.items.length}건 읽음${conv.unread.length ? ` · ${conv.unread.length}줄은 가져올 수 없어요(다음 화면에서 이유 확인)` : ''}</p>` : ''}
     </div>
     <div class="sheet-footer">${needNeg && !imp.err ? '<p class="foot-hint">위에서 음수 금액 처리 방식을 골라 주세요</p>' : ''}<div class="err" id="imp-err" role="alert">${esc(imp.err)}</div>
@@ -1189,7 +1198,7 @@ function mapHtml() {
 // 저장을 막는 조건(선택·저장 두 곳에서 같은 검사)
 function impValidate(it) {
   const e = [];
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(it.date || '')) e.push('날짜를 확인해 주세요');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(it.date || '') || core.toDate(it.date) !== it.date) e.push('날짜를 확인해 주세요');
   else if (it.date > today()) e.push('미래 날짜예요. 확인해 주세요');
   if (!(Number.isInteger(it.amount) && it.amount > 0)) e.push(it.foreign ? '원화 금액을 넣어 주세요' : '금액을 넣어 주세요');
   if (!it.merchant) e.push('거래처를 넣어 주세요');
@@ -1263,7 +1272,7 @@ function impEditor(it, i) {
     <details class="more"><summary>더 수정하기 <span class="sum">시각·결제수단·메모</span></summary>
       <div class="row2"><div class="field"><label for="ie-time">시각</label><input id="ie-time" type="time" class="in" value="${esc(it.time || '')}"></div>
         <div class="field"><label for="ie-method">결제수단</label><select id="ie-method" class="in">${methods.map(m => `<option ${m === it.method ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div></div>
-      <div class="field"><label for="ie-note">메모</label><input id="ie-note" class="in" value="${esc(it.note || '')}" autocomplete="off" maxlength="150"></div></details>
+      <div class="field"><label for="ie-note">메모</label><input id="ie-note" class="in" value="${esc(it.note || '')}" autocomplete="off" maxlength="200"></div></details>
     ${it.raw ? `<details class="source-detail"><summary>원문 보기</summary><pre>${esc(it.raw)}</pre></details>` : ''}
     <div class="err" id="ie-err" role="alert"></div>
     <div class="imp-edit-btns"><button type="button" class="btn ghost" data-act="impcancel">취소</button><button type="button" class="btn" data-act="impapply" data-v="${i}">목록에 반영</button></div>
@@ -1308,7 +1317,7 @@ function commitEdit() {
     merchant: $('#ie-merchant').value.trim().slice(0, 60),
     category: $('#ie-cat').value, payer: $('#ie-payer').value,
     time: $('#ie-time') ? $('#ie-time').value : it.time, method: $('#ie-method') ? $('#ie-method').value : it.method,
-    note: $('#ie-note') ? $('#ie-note').value.trim().slice(0, 150) : it.note,
+    note: $('#ie-note') ? $('#ie-note').value.trim().slice(0, 200) : it.note,
   });
   const ty = $('#ie-type [aria-pressed=true]'); if (ty) next.type = ty.dataset.v;
   const errs = impValidate(next);
@@ -1323,8 +1332,8 @@ function commitEdit() {
   return true;
 }
 function openEditor(i) {
-  if (imp.editing === i) { imp.editing = -1; renderImport(); return; }
   if (!commitEdit()) return;
+  if (imp.editing === i) { renderImport(); return; } // commitEdit가 닫았다
   imp.editing = i; renderImport();
   const ed = $('#imp-edit'); if (ed) ed.scrollIntoView({ block: 'nearest', behavior: 'instant' });
 }
@@ -1486,15 +1495,15 @@ document.addEventListener('click', e => {
     case 'fav': applyFavorite(v); break;
     case 'favadd': addFavorite(); break;
     case 'favdel':
-      if ($('[data-form=entry]')) { removeFavorite(v, true); const x = $('[data-act=favdel]'); if (x) x.outerHTML = favButton(); $('#fav-msg').textContent = '즐겨찾기에서 뺐어요'; }
-      else removeFavorite(v);
+      if ($('[data-form=entry]')) { const ok = removeFavorite(v, true); const x = $('[data-act=favdel]'); if (x) x.outerHTML = favButton(); $('#fav-msg').textContent = ok ? '즐겨찾기에서 뺐어요(두 사람 모두에게서)' : '즐겨찾기를 지우지 못했어요'; }
+      else if (!removeFavorite(v)) toast('즐겨찾기를 지우지 못했어요');
       break;
     case 'favmanage': stashDraft(); $('#sheet').close(); tab = 'settings'; render(); { const el = $('#fav-section'); if (el) el.scrollIntoView(); } break;
     case 'me': store.setLocal('me', v); render(); break;
     case 'sync': sync(); break;
     case 'merchant': $('#merchant').value = v; draft.merchant = v; suggestFor(v); break;
-    case 'cat': draft.category = draft.category === v ? '' : v; setPressed(b.parentElement, draft.category); break;
-    case 'type': draft.type = v; setPressed(b.parentElement, v); break;
+    case 'cat': draft.category = draft.category === v ? '' : v; setPressed(b.parentElement, draft.category); refreshFavButton(); break;
+    case 'type': draft.type = v; setPressed(b.parentElement, v); refreshFavButton(); break;
     case 'delete':
       { const id = draft.id; askDelete(id, () => { saved = true; $('#sheet').close(); }); }
       break;
@@ -1547,6 +1556,7 @@ document.addEventListener('input', e => {
 document.addEventListener('compositionend', e => { if (e.target.dataset.input === 'q') { lf.q = e.target.value; clearTimeout(qTimer); qTimer = setTimeout(render, 150); } });
 document.addEventListener('change', e => {
   if (e.target.id === 'merchant') { draft.merchant = e.target.value.trim(); suggestFor(draft.merchant); }
+  if (e.target.closest && e.target.closest('[data-form=entry]')) refreshFavButton();
   if (e.target.id === 'imp-file' && e.target.files && e.target.files[0]) loadImportFile(e.target.files[0]);
   const mk = e.target.dataset && e.target.dataset.map;
   if (mk && imp && imp.file) {

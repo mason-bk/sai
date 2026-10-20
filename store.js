@@ -90,16 +90,17 @@ const store = (() => {
     syncing = true; syncError = ''; emit('status');
     try {
       if (S.pendingSettings) {
-        const out = Object.assign({}, S.pendingSettings);
-        if (out.prefs && S.prefsDirty) {
+        // 보낼 내용과 '보낸 뒤 바뀌었는지' 비교 기준을 기다리기 전에 함께 고정한다
+        const sent = JSON.stringify(S.pendingSettings), dirty = (S.prefsDirty || []).slice();
+        const out = JSON.parse(sent);
+        if (out.prefs && dirty.length) {
           // 보내기 직전 서버의 최신 prefs를 받아 그 위에 얹는다(기록은 건드리지 않는 빈 동기화)
           const pre = await api({ action: 'sync', since: Number.MAX_SAFE_INTEGER, ops: [] });
           S.serverPrefs = (pre.settings && pre.settings.prefs) || {};
           const base = Object.assign({}, S.serverPrefs);
-          S.prefsDirty.forEach(k => { if (k in out.prefs) base[k] = out.prefs[k]; else delete base[k]; });
+          dirty.forEach(k => { if (k in out.prefs) base[k] = out.prefs[k]; else delete base[k]; });
           out.prefs = base;
         }
-        const sent = JSON.stringify(S.pendingSettings);
         const r = await api({ action: 'settings', settings: out });
         if (JSON.stringify(S.pendingSettings) === sent) { S.settings = normSettings(r.settings); S.pendingSettings = null; S.prefsDirty = null; S.serverPrefs = r.settings.prefs || null; }
         save();

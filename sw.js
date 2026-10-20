@@ -5,6 +5,8 @@ const SHELL = ['./', 'index.html', 'core.js', 'store.js', 'app.js', 'manifest.we
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
+// 화면이 '지금 실행 중인 버전'을 물으면 이 워커의 캐시 이름을 알려 준다(설정 → 최신 버전 받기)
+self.addEventListener('message', e => { if (e.data === 'version' && e.source) e.source.postMessage({ version: CACHE }); });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });

@@ -63,13 +63,14 @@
    * frac = 0이 아닌 소수 자리가 있는지(Number로 바꾸기 전에 글자로 판정: 9999999999.0000001도 소수) */
   function amountInfo(v) {
     if (typeof v === 'number') return Number.isFinite(v) ? { n: v, frac: !Number.isInteger(v) } : { n: NaN, frac: false };
+    if (/\d[\s\u00a0]+[\d,.]|[\d,.][\s\u00a0]+\d/.test(String(v == null ? '' : v))) return { n: NaN, frac: false }; // 숫자 사이 공백(1 23)은 거부
     let s = String(v == null ? '' : v).replace(/[\s\u00a0]/g, '');
     if (!s) return { n: NaN, frac: false };
     let neg = false;
     if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
+    const pre = /^(₩|￦|KRW)/i.test(s);
     s = s.replace(/^(₩|￦|KRW)/i, '').replace(/(원|KRW)$/i, '');
-    if (/^[-−–]/.test(s)) { if (neg) return { n: NaN, frac: false }; neg = true; s = s.slice(1); }
-    s = s.replace(/^(₩|￦|KRW)/i, '');
+    if (/^[-−–]/.test(s)) { if (neg) return { n: NaN, frac: false }; neg = true; s = s.slice(1); if (!pre) s = s.replace(/^(₩|￦|KRW)/i, ''); } // -₩1,000 은 허용, KRWKRW1000 은 거부
     const m = s.match(/^(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?$/);
     if (!m) return { n: NaN, frac: false };
     const n = Number(m[1].replace(/,/g, '') + (m[2] ? '.' + m[2] : ''));
@@ -103,12 +104,15 @@
       const before = text.slice(Math.max(0, m.index - 12), m.index);
       const digits = m[1] || m[2] || m[3], ds = m.index + m[0].indexOf(digits), de = ds + digits.length;
       // 금액 토큰 전체를 본다: 앞뒤가 숫자·소수점·쉼표·지수·부호로 이어지면(12.30원, 1,23원, 1e3원, -1,000원) 일부만 금액으로 쓰지 않는다(v22)
-      const prev = text[ds - 1] || '', next = text.slice(de, de + 2), sign = /[-−–]\s?$/.test(text.slice(Math.max(0, ds - 2), ds));
-      const bad = /[\d.,eE+]/.test(prev) || /^[.,]\d/.test(next) || sign;
-      let a = ds, z = de;
-      while (a > 0 && /[\d.,eE+\-−–₩\s]/.test(text[a - 1]) && !/\n/.test(text[a - 1])) a--;
-      while (z < text.length && /[\d.,eE원]/.test(text[z])) z++;
-      out.push({ n: bad ? 0 : Number(digits.replace(/,/g, '')), bad, raw: text.slice(a, Math.max(z, m.index + m[0].length)).trim(), paid: !NOT_PAID.test(before), index: m.index, len: m[0].length });
+      // 토큰 범위를 양옆으로 넓혀(부호·통화·숫자·소수점·쉼표·지수·+) 그 전체를 직접 입력과 같은 원화 문법으로 검사한다
+      let a = Math.min(m.index, ds), z = de;
+      while (a > 0 && /[\d.,eE+\-−–₩￦ \t]|[KRWkrw]/.test(text[a - 1])) a--;
+      while (z < text.length && /[\d.,eE+\-−–]/.test(text[z])) z++;
+      const won = text.slice(z).match(/^\s*원/);
+      const span = text.slice(a, z).replace(/^[ \t]*(?:[A-Za-z]*[^A-Za-z₩￦\d\-−–+ \t]+)?/, '').trim();
+      const tok = span + (won ? '원' : '');
+      const bad = !parseWon(tok).ok;
+      out.push({ n: bad ? 0 : Number(digits.replace(/,/g, '')), bad, raw: tok, paid: !NOT_PAID.test(before), index: m.index, len: m[0].length });
     }
     return out;
   }

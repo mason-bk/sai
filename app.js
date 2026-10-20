@@ -65,6 +65,13 @@ function toast(msg, action, onAction, ms) {
     t.appendChild(b);
   }
   t.classList.add('on');
+  // 시트 안 알림이 본문 보이는 높이의 25% 이상을 가리면 떠 있지 않고 아래 버튼 바로 위 줄로 들어간다(Astra 토스트 규격)
+  if (t.classList.contains('in-sheet')) {
+    t.classList.remove('in-flow');
+    const body = dlg.querySelector('.sheet-b'), foot = dlg.querySelector('.sheet-footer');
+    if (body && foot && t.getBoundingClientRect().height > body.clientHeight * .25) { t.classList.add('in-flow'); foot.parentElement.insertBefore(t, foot); }
+    else if (t.parentElement !== dlg) dlg.appendChild(t);
+  }
   toastHold.delete('hover'); toastHold.delete('focus');
   toastArm((ms || (action ? 8000 : 4000)) + 160); // 나타나는 시간(160ms) 뒤부터 센다
   t.onpointerenter = () => toastPause('hover'); t.onpointerleave = () => toastResume('hover');
@@ -372,7 +379,10 @@ function moneyInput(el, ev) {
   // 사용자가 숫자 아닌 글자(쉼표 등)를 치거나 붙여넣으면 그 칸은 '원문 모드': 비우거나 올바른 금액이 될 때까지 쉼표를 고치지 않는다
   if (!v) delete el.dataset.raw;
   else if ((it === 'insertText' && !/^\d+$/.test(data || '')) || /^insertFrom|^insertReplacement/.test(it)) el.dataset.raw = '1';
-  const typedDigits = !el.dataset.raw && (/^delete/.test(it) || (it === 'insertText' && /^\d+$/.test(data || '')) || (!it && /^\d+$/.test(v)));
+  // 직전 값(처음엔 그려질 때의 값)이 올바른 쉼표 모양이었을 때만 숫자 입력을 다시 묶는다: 다시 연 초안의 '1,23'에 숫자를 더해도 고치지 않음
+  const prev = el.dataset.prev != null ? el.dataset.prev : el.defaultValue;
+  const prevOk = !prev || /^\d{1,3}(,\d{3})*$/.test(prev);
+  const typedDigits = !el.dataset.raw && prevOk && (/^delete/.test(it) || (it === 'insertText' && /^\d+$/.test(data || '')) || (!it && /^\d+$/.test(v)));
   const digitsOnly = v.replace(/,/g, '');
   if (v && /^[\d,]+$/.test(v) && digitsOnly.length <= 10 && (r.ok || r.error === 'zero' || typedDigits)) {
     const caret = el.selectionStart == null ? v.length : el.selectionStart;
@@ -386,10 +396,12 @@ function moneyInput(el, ev) {
     }
   }
   el.style.setProperty('--len', Math.max(6, el.value.length));
+  el.dataset.prev = el.value;
   const bad = !r.ok && r.error !== 'empty';
   el.setAttribute('aria-invalid', String(bad));
   const echo = el.closest('.field') && el.closest('.field').querySelector('.amount-echo');
-  if (echo) echo.textContent = r.ok && r.value >= 10000 ? koWon(r.value) : '';
+  // 칸보다 길어 잘리면 원 단위 전체 금액도 함께(가로 커서 이동은 허용)
+  if (echo) echo.textContent = r.ok && r.value >= 10000 ? (el.scrollWidth > el.clientWidth + 1 ? won(r.value) + '원 · ' : '') + koWon(r.value) : '';
   return bad ? WON_ERR[r.error] : '';
 }
 // 큰 금액을 읽기 쉽게: 123,456,789 → 1억 2,345만 6,789원 (입력 칸 아래 확인 줄)
@@ -506,9 +518,9 @@ function analysisView() {
         ${r.custom ? '' : `<div class="cyc-actions"><button data-act="hcyc" data-v="-1" aria-label="이전 ${UNIT[r.unit].name}">${icon('left')}</button><button data-act="hcyc" data-v="1" aria-label="다음 ${UNIT[r.unit].name}" ${hOff >= 0 ? 'disabled' : ''}>${icon('right')}</button></div>`}
       </div>
       ${amt(total)}
-      <div class="sub"><span>${txs.length}건${spanDays > 1 ? ` · 하루 평균 ${man(Math.round(avg))}원` : ''}</span></div>
-      ${prevTxs.length ? `<div class="delta">${cmpName}보다 <b class="num">${won(Math.abs(diff))}원 ${diff >= 0 ? '더 썼어요' : '덜 썼어요'}</b>${prevTotal >= 10000 ? ` <span class="num">(${diff >= 0 ? '+' : '−'}${Math.abs(Math.round(diff / prevTotal * 100))}%)</span>` : prevTotal < 0 ? ` <span>(${cmpName} 순환불 ${won(-prevTotal)}원)</span>` : ''}</div>` : `<div class="delta">${cmpName}와 비교할 기록이 없어요</div>`}
-      ${pace ? `<details class="more pace-more" data-k="pace-more"><summary><span class="sum-wrap"><span class="sum-lab">예상·같은 시점 비교</span></span>${icon('down')}</summary>${pace}</details>` : ''}
+      <div class="sub"><span>${txs.length}건</span></div>
+      ${prevTxs.length ? `<div class="delta">${cmpName}보다 <b class="num">${won(Math.abs(diff))}원 ${diff >= 0 ? '더 썼어요' : '덜 썼어요'}</b>${prevTotal >= 10000 ? ` <span class="num">(${diff >= 0 ? '+' : '−'}${Math.abs(Math.round(diff / prevTotal * 100))}%)</span>` : prevTotal < 0 ? ` <span>(${cmpName} 순환불 ${won(-prevTotal)}원)</span>` : ` <span>(${cmpName} ${won(prevTotal)}원)</span>`}</div>` : `<div class="delta">${cmpName}와 비교할 기록이 없어요</div>`}
+      ${pace || spanDays > 1 ? `<details class="more pace-more" data-k="pace-more"><summary><span class="sum-wrap"><span class="sum-lab">${pace ? '하루 평균·예상·같은 시점 비교' : '하루 평균'}</span></span>${icon('down')}</summary><div class="pace"><span>하루 평균 <b class="num">${man(Math.round(avg))}원</b></span></div>${pace}</details>` : ''}
       ${periods}
     </section>`;
 
@@ -1031,7 +1043,7 @@ function ruleHtml() {
     <div class="sheet-b">
       <div class="field"><label for="r-name">이름</label><input id="r-name" name="name" class="in" autocomplete="off" placeholder="예: 핸드폰비, 주택담보대출, 실손보험" value="${esc(d.name)}"></div>
       <div class="field"><label for="r-amount">금액</label>
-        <div class="amount-in"><input id="r-amount" name="amount" inputmode="numeric" autocomplete="off" placeholder="0" value="${esc(d.amountText != null ? d.amountText : d.amount ? won(d.amount) : '')}" class="num" style="--len:${Math.max(6, d.amount ? won(d.amount).length : 0)}"><span>원</span></div>
+        <div class="amount-in"><input id="r-amount" name="amount" inputmode="numeric" autocomplete="off" placeholder="0" value="${esc(d.amountText != null ? d.amountText : d.amount ? won(d.amount) : '')}" class="num" style="--len:${Math.max(6, d.amount ? won(d.amount).length : 0)}"${d.amountErr && d.amountErr !== 'empty' ? ' data-raw="1"' : ''}><span>원</span></div>
         <p class="amount-echo num" aria-live="polite">${d.amount >= 10000 ? koWon(d.amount) : ''}</p>
         <div class="err" id="rule-err" role="alert"></div></div>
       <div class="field"><label for="r-cat">분류</label><input id="r-cat" name="category" class="in" list="r-cats" autocomplete="off" placeholder="예: 대출, 통신비, 보험" value="${esc(d.category)}">
@@ -1102,11 +1114,11 @@ function editDirty() {
   readEntry(f); return editKey(draft) !== editBase;
 }
 function askDiscard(onDiscard) {
-  const dlg = $('#confirm');
+  const dlg = $('#confirm'), back = document.activeElement;
   dlg.setAttribute('aria-labelledby', 'confirm-title');
   dlg.innerHTML = `<div class="confirm-box" tabindex="-1" autofocus><b id="confirm-title">수정한 내용이 있어요</b><p>닫으면 고친 내용이 사라져요.</p>
     <div class="confirm-btns"><button type="button" value="keep" class="btn">계속 수정</button><button type="button" value="drop" class="btn ghost">수정 버리기</button></div></div>`;
-  dlg.querySelector('[value=keep]').onclick = () => { dlg.close(); const a = $('#amount'); if (a) a.focus(); };
+  dlg.querySelector('[value=keep]').onclick = () => { dlg.close(); const a = back && back.isConnected && $('#sheet').contains(back) ? back : $('#amount'); if (a) a.focus(); };
   dlg.querySelector('[value=drop]').onclick = () => { dlg.close(); onDiscard(); };
   dlg.oncancel = null;
   dlg.showModal();
@@ -1145,7 +1157,7 @@ function openEntry(id) {
   const a = $('#amount');
   a.style.setProperty('--len', Math.max(6, a.value.length));
   a.focus();
-  if (ex) a.setSelectionRange(a.value.length, a.value.length);
+  if (a.value) a.setSelectionRange(a.value.length, a.value.length); // 수정·이어 쓰는 초안은 커서를 끝에
 }
 function entryHtml(isEdit) {
   const d = draft, st = S.settings;
@@ -1157,7 +1169,7 @@ function entryHtml(isEdit) {
     ${sheetHead(isEdit ? '기록 수정' : '지출 기록')}
     <div class="sheet-b">
       <div class="field amount-field"><label for="amount">얼마를 썼나요?</label>
-        <div class="amount-in"><input id="amount" name="amount" inputmode="numeric" autocomplete="off" placeholder="0" value="${esc(d.amountText != null ? d.amountText : d.amount ? won(d.amount) : '')}" class="num" aria-describedby="entry-err amount-echo" aria-invalid="${!!d.amountErr && d.amountErr !== 'empty'}"><span>원</span></div>
+        <div class="amount-in"><input id="amount" name="amount" inputmode="numeric" autocomplete="off" placeholder="0" value="${esc(d.amountText != null ? d.amountText : d.amount ? won(d.amount) : '')}" class="num" aria-describedby="entry-err amount-echo" aria-invalid="${!!d.amountErr && d.amountErr !== 'empty'}"${d.amountErr && d.amountErr !== 'empty' ? ' data-raw="1"' : ''}><span>원</span></div>
         <p class="amount-echo num" id="amount-echo" aria-live="polite">${d.amount >= 10000 ? koWon(d.amount) : ''}</p>
         <div class="err" id="entry-err" role="alert">${d.amountErr && d.amountErr !== 'empty' ? WON_ERR[d.amountErr] : ''}</div></div>
       ${isEdit ? '' : `<div class="chips tool-chips"><button type="button" class="chip" data-act="favlist">${icon('star')}<span>즐겨찾기</span></button><button type="button" class="chip paste-link" data-act="impopen" data-v="paste">${icon('paste')}<span>알림 붙여넣기</span></button></div>`}
@@ -1238,7 +1250,7 @@ function repaintSheet(html) {
   const open = [...dlg.querySelectorAll('details')].map((d, i) => d.open ? (d.dataset.k || i) : null).filter(x => x !== null);
   const t = dlg.querySelector('.toast.in-sheet');
   dlg.innerHTML = html;
-  if (t) dlg.appendChild(t);
+  if (t) { t.classList.remove('in-flow'); dlg.appendChild(t); }
   [...dlg.querySelectorAll('details')].forEach((d, i) => { if (open.includes(d.dataset.k || i)) d.open = true; });
   const nb = $('#sheet .sheet-b'); if (nb) nb.scrollTop = y;
   if (aid) {
@@ -1373,7 +1385,7 @@ function parkImport() {
   if (imp && imp.step === 'review' && imp.items.length && !imp.done) { commitEdit(); impPrev = imp; }
   imp = null;
 }
-const renderImport = () => { if (imp) repaintSheet(importHtml()); };
+const renderImport = () => { if (imp) { repaintSheet(importHtml()); fitRows(); } };
 const impHead = (title, back) => sheetHead(title, back ? 'impback' : '') + `<p class="step-label">${imp.kind === 'paste' ? (imp.step === 'paste' ? '1/2 알림 입력' : '2/2 저장할 기록 확인') : imp.step === 'file' ? '1/3 파일 선택' : imp.step === 'map' ? '2/3 파일 항목 확인' : '3/3 저장할 기록 확인'}</p>`;
 function importHtml() {
   const st = imp.step;
@@ -1706,8 +1718,8 @@ function lfSheetHtml() {
       <section class="filter-section" id="lf-cats"><h3>분류 <span class="h2sub">여러 개 고를 수 있어요</span></h3><div class="chips">${cats.map(c => chip('lfcat', c, f.cats.includes(c), c)).join('')}</div></section>
       <section class="filter-section" id="lf-payers"><h3>결제자</h3><div class="chips">${payerList().map(p => chip('lfpayer', p, f.payers.includes(p), p)).join('')}</div></section>
       <section class="filter-section" id="lf-amount"><h3>금액</h3><div class="row2 amt-range">
-        <label>최소 금액(원)<input class="in num" data-money data-input="lfmin" inputmode="numeric" autocomplete="off" placeholder="제한 없음" value="${esc(f.minText != null ? f.minText : f.min ? won(f.min) : '')}" aria-invalid="${!!f.minBad}"></label>
-        <label>최대 금액(원)<input class="in num" data-money data-input="lfmax" inputmode="numeric" autocomplete="off" placeholder="제한 없음" value="${esc(f.maxText != null ? f.maxText : f.max ? won(f.max) : '')}" aria-invalid="${!!f.maxBad}"></label></div>
+        <label>최소 금액(원)<input class="in num" data-money data-input="lfmin" inputmode="numeric" autocomplete="off" placeholder="제한 없음" value="${esc(f.minText != null ? f.minText : f.min ? won(f.min) : '')}" aria-invalid="${!!f.minBad}"${f.minBad ? ' data-raw="1"' : ''}></label>
+        <label>최대 금액(원)<input class="in num" data-money data-input="lfmax" inputmode="numeric" autocomplete="off" placeholder="제한 없음" value="${esc(f.maxText != null ? f.maxText : f.max ? won(f.max) : '')}" aria-invalid="${!!f.maxBad}"${f.maxBad ? ' data-raw="1"' : ''}></label></div>
         <div class="err">${esc(amtMsg)}</div></section>
       <section class="filter-section" id="lf-kind"><h3>종류</h3><div class="chips">${KINDS.map(([k, l]) => chip('lfkind', k, f.kind === k, l)).join('')}</div></section>
     </div>
@@ -1949,9 +1961,8 @@ function stashDraft() {
   if (!saved && !editing && draft && f) {
     readEntry(f);
     const has = draft.amount || (draft.amountText || '').trim() || draft.merchant || draft.note;
-    if (!has) store.setLocal('draft', null); // 비울 때 실패는 닫기를 막지 않는다
-    else if (!store.setLocal('draft', draft)) {
-      const fe = $('#entry-foot-err'); if (fe) fe.textContent = '작성 중인 내용을 기기에 남기지 못했어요. 기록하거나 내용을 지운 뒤 닫아 주세요';
+    if (!store.setLocal('draft', has ? draft : null)) {
+      const fe = $('#entry-foot-err'); if (fe) fe.textContent = has ? '작성 중인 내용을 기기에 남기지 못했어요. 기록하거나 기기 저장공간을 확인해 주세요' : '이전 초안을 지우지 못했어요. 기기 저장공간을 확인한 뒤 다시 닫아 주세요';
       return false;
     }
   }
@@ -2015,6 +2026,15 @@ function fitRows() {
     return aw > content * .45 || content - aw - 12 < 8 * fs;
   });
   rows.forEach((row, i) => { if (want[i] !== null && row.classList.contains('stack') !== want[i]) row.classList.toggle('stack', want[i]); });
+  // 확인 목록 행(거래처 | 금액)도 같은 기준
+  const tops = [...document.querySelectorAll('#sheet .imp-top')];
+  const want2 = tops.map(top => {
+    const a = top.querySelector('.imp-a'); if (!a || !top.clientWidth) return null;
+    const fs = parseFloat(getComputedStyle(top).fontSize) || 16, rg = document.createRange(); rg.selectNodeContents(a);
+    const aw = [...rg.getClientRects()].reduce((w, r) => w + r.width, 0);
+    return aw > top.clientWidth * .45 || top.clientWidth - aw - 8 < 8 * fs;
+  });
+  tops.forEach((top, i) => { if (want2[i] !== null && top.classList.contains('stack') !== want2[i]) top.classList.toggle('stack', want2[i]); });
 }
 addEventListener('resize', () => fitRows());
 function fitSticky() {
@@ -2030,7 +2050,7 @@ function fitSticky() {
 // 시트 아래 버튼·본문 크기가 바뀌면(오류 줄 추가, 글자 크기, 내용 교체) 좁은 시트 판정과 시트 안 알림 위치를 다시 잰다(Astra V22-07)
 if (window.ResizeObserver) {
   const sheetRO = new ResizeObserver(() => {
-    fitSheet();
+    fitSheet(); fitRows();
     const t = document.querySelector('#sheet .toast.in-sheet'), f = document.querySelector('#sheet .sheet-footer');
     if (t) t.style.bottom = (f ? f.getBoundingClientRect().height : 0) + 12 + 'px';
   });
@@ -2048,6 +2068,7 @@ if (window.visualViewport) {
 }
 if (window.ResizeObserver) {
   const navObs = new ResizeObserver(() => {
+    requestAnimationFrame(fitRows); // 글자 크기·글꼴이 바뀌면 탭 높이도 바뀐다 → 거래 행 배치도 다시
     const n = document.querySelector('nav.tabs'), r = n && n.getBoundingClientRect();
     const bottomBar = r && r.width > r.height;
     document.documentElement.style.setProperty('--nav-h', (bottomBar ? Math.round(r.height) : 0) + 'px');
@@ -2062,12 +2083,16 @@ if (window.ResizeObserver) {
 let verRunning = '', verLatest = '', verCheckedAt = 0;
 // 실행 중 버전 = 이 화면을 연 서비스 워커의 캐시 이름(없으면 첫 조회값), 서버 버전 = 지금 sw.js. 실패·지연은 버전보다 먼저 보인다(Astra V22-10)
 let verFailed = false, verSlow = false, verOkAt = 0;
-if (window.caches && caches.keys) caches.keys().then(ks => { const k = ks.find(x => /^sai-shell-/.test(x)); if (k && !verRunning) { verRunning = k.replace('sai-shell-', ''); const el = $('#ver'); if (el) el.textContent = verText(); } }).catch(() => {});
+// 이 화면을 맡은 서비스 워커에게 자기 캐시 이름을 묻는다(여러 캐시가 남아 있어도 정확)
+if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+  navigator.serviceWorker.addEventListener('message', e => { const v = e.data && e.data.version && String(e.data.version).replace('sai-shell-', ''); if (v) { verRunning = v; const el = $('#ver'); if (el) el.textContent = verText(); } });
+  try { navigator.serviceWorker.controller.postMessage('version'); } catch (e) {}
+}
 function verText() {
   const cur = verRunning ? '현재 ' + verRunning : '현재 버전 확인 중';
   const last = verOkAt ? ' · 마지막 확인 ' + new Date(verOkAt).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' }) : '';
   if (verFailed) return cur + ' · 최신 버전을 확인하지 못했어요' + last + ' · 눌러서 다시 확인';
-  if (verSlow) return cur + ' · 확인이 오래 걸려요 · 눌러서 다시 확인';
+  if (verSlow) return cur + ' · 확인이 오래 걸려요' + last + ' · 눌러서 다시 확인';
   if (!verLatest) return cur;
   return cur + (verLatest !== verRunning ? ' · 새 버전이 있어요 (' + verLatest + ') · 눌러서 업데이트' : ' · 최신 버전이에요' + last);
 }
@@ -2082,7 +2107,7 @@ async function checkUpdate(force) {
     const v = (src.match(/sai-shell-([\w.-]+)/) || [])[1];
     if (v) { verLatest = v; verOkAt = Date.now(); if (!verRunning) verRunning = v; } else { verFailed = true; verCheckedAt = 0; }
   } catch (e) { verFailed = true; verCheckedAt = 0; }
-  clearTimeout(slow);
+  clearTimeout(slow); verSlow = false; // 늦게라도 끝나면(성공·실패) '오래 걸려요'는 지운다
   { const el = $('#ver'); if (el) el.textContent = verText(); }
   if (verFailed) return false;
   const el = $('#ver'); if (el) el.textContent = verText();

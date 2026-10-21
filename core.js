@@ -13,6 +13,9 @@
  *   필터·합계    filterTxs(txs, filter, range), summarize(txs)
  *   카드값(v24)  payDate(range, payDay, startDay), billOf(startDay, payDay, offset, now), billCycle(startDay, payDay, now), ddayText(days),
  *                cardMethodsOf(methods, chosen), payerShares(entries), billSummary(txs, range, cardMethods, payers), statementDiff(ledger, statement)
+ *   v25          fullDate, addMonths, monthOf, monthRange(offset, now), monthOffsetOf, monthCompare(offset, now), compareNet(txs, cmp),
+ *                MAJORS, majorOf(tx, catMap), majorTotals, mappingQueue, budgetFor(prefs, ym), budgetCheck, budgetApply(prefs, ym, field, value, scope, meta),
+ *                legacyProposal(legacy, catMap), parseBudgetWon, parseClaimWon, pageOf(count, page, size), retryDelay(attempt), scopeTxs(txs, opts), billKey
  * ===================================================================== */
 (function (root) {
   const pad = n => String(n).padStart(2, '0');
@@ -51,6 +54,8 @@
     s = s.replace(/^(₩|￦|KRW)/i, '').replace(/(원|KRW)$/i, '');
     if (/^[-−–(]|^\+/.test(s) || /\)$/.test(s)) return { ok: false, value: 0, error: /^\+/.test(s) ? 'format' : 'negative', digits: '' };
     if (/^\d[\d,]*\.\d*$|^\.\d+$/.test(s)) return { ok: false, value: 0, error: 'decimal', digits: '' };
+    // 숫자·쉼표만인데 11자리 이상이면 쉼표 모양보다 자릿수 초과를 먼저 알린다(Fable v24 P2: '1,234,567,8901'에 '숫자만'이 뜨던 문제)
+    if (/^[\d,]+$/.test(s) && s.replace(/,/g, '').replace(/^0+(?=\d)/, '').length > 10) return { ok: false, value: 0, error: 'over', digits: s.replace(/,/g, '').replace(/^0+(?=\d)/, '') };
     if (!/^(\d{1,3}(,\d{3})+|\d+)$/.test(s)) return { ok: false, value: 0, error: 'format', digits: '' };
     const digits = s.replace(/,/g, '').replace(/^0+(?=\d)/, '');
     if (digits.length > 10 || Number(digits) > MAX_WON) return { ok: false, value: 0, error: 'over', digits };
@@ -606,12 +611,173 @@
     return { diff: d, abs: Math.abs(d), kind: d === 0 ? 'match' : d > 0 ? 'missing' : 'extra' };
   }
 
+  /* ===== v25: 달력 월 · 지난달 같은 날까지 비교 · 대분류 8개 · 월 예산 · 쪽 나누기 · 공유 재시도 =====
+   * 월(1일~말일)과 카드 청구(이용 기간)는 다른 기준이다. 예산은 언제나 달력 월, 카드값은 언제나 이용 기간. 같은 '이번 주기'로 부르지 않는다. */
+  const fullDate = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s || '')) ? String(s).replace(/-/g, '.') : '';
+  const validYm = ym => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(ym || ''));
+  function addMonths(ym, k) { const [y, m] = ym.split('-').map(Number), d = new Date(y, m - 1 + (k || 0), 1); return d.getFullYear() + '-' + pad(d.getMonth() + 1); }
+  // ym('2026-10') → { start, end, ym, year, month }. 로컬 달력 1일~말일(양 끝 포함). 윤년 2월은 29일
+  function monthOf(ym) {
+    const [y, m] = ym.split('-').map(Number), s = new Date(y, m - 1, 1), e = new Date(y, m, 0);
+    return { start: ymd(s), end: ymd(e), ym: ymd(s).slice(0, 7), year: s.getFullYear(), month: s.getMonth() + 1 };
+  }
+  // 오늘이 든 달에서 offset만큼(0 = 이번 달, -1 = 지난달)
+  function monthRange(offset, now) { now = now || new Date(); const r = monthOf(addMonths(ymd(now).slice(0, 7), offset || 0)); r.offset = offset || 0; return r; }
+  // 어떤 달이 오늘 기준 몇 달 전인지(monthRange의 역)
+  function monthOffsetOf(ym, now) { now = now || new Date(); const [y, m] = ym.split('-').map(Number); return (y - now.getFullYear()) * 12 + (m - 1 - now.getMonth()); }
+  /* 지난달 비교 범위(spec 4.1): 진행 중인 달 = 1일~오늘 ↔ 지난달 1일~같은 일자(지난달에 없는 일자는 말일).
+   * 끝난 달 = 두 달 전체. 아직 오지 않은 달 = 비교하지 않음(future). 오늘 뒤 날짜로 적은 기록은 진행 중 비교에서 빠진다 */
+  function monthCompare(offset, now) {
+    now = now || new Date();
+    const cur = monthRange(offset, now), prev = monthRange((offset || 0) - 1, now), td = ymd(now);
+    if (cur.start > td) return { partial: false, future: true, cur: { start: cur.start, end: cur.end }, prev: { start: prev.start, end: prev.end } };
+    if (td <= cur.end) {
+      const last = Number(prev.end.slice(8)), d = Math.min(now.getDate(), last);
+      return { partial: true, future: false, cur: { start: cur.start, end: td }, prev: { start: prev.start, end: prev.start.slice(0, 8) + pad(d) } };
+    }
+    return { partial: false, future: false, cur: { start: cur.start, end: cur.end }, prev: { start: prev.start, end: prev.end } };
+  }
+  // 두 범위의 순지출 비교. 지난 범위에 기록이 없으면 hasPrev=false(0으로 나눈 비율을 만들지 않음). pct는 지난 순지출이 양수일 때만
+  function compareNet(txs, cmp) {
+    const inR = (t, r) => !t.deleted && t.date >= r.start && t.date <= r.end;
+    const a = txs.filter(t => inR(t, cmp.cur)), b = cmp.future ? [] : txs.filter(t => inR(t, cmp.prev));
+    const cur = a.reduce((s, t) => s + signed(t), 0), prev = b.reduce((s, t) => s + signed(t), 0);
+    return { cur, prev, diff: cur - prev, curCount: a.length, prevCount: b.length, hasPrev: b.length > 0, pct: prev > 0 ? Math.round((cur - prev) / prev * 100) : null };
+  }
+
+  /* 대분류 8개(spec 7절). 거래의 category 칸(시트 '분류' 열)은 그대로 두고, 대분류는 읽을 때 정한다(서버·시트 변경 없음).
+   * 우선순위: 건별 명시(분류 이름이 대분류 이름) → 사용자가 확정한 세부 분류 연결(prefs.cat_map) → 기본 분류 표 → 기타+확인 필요.
+   * 광범위 글자 추정으로 확정하지 않는다: MAJOR_HINT는 연결 화면의 '제안'에만 쓴다 */
+  const MAJORS = [['food', '식비'], ['living', '생활'], ['transport', '교통'], ['shopping', '쇼핑'], ['fixed', '고정지출'], ['medical', '의료'], ['leisure_social', '여가·경조'], ['other', '기타']].map(([id, label]) => ({ id, label }));
+  const MAJOR_IDS = MAJORS.map(m => m.id);
+  const majorLabel = id => (MAJORS.find(m => m.id === id) || {}).label || '';
+  const MAJOR_BY_LABEL = Object.fromEntries(MAJORS.map(m => [m.label, m.id]));
+  const MAJOR_TABLE = { '식비': 'food', '카페': 'food', '생활': 'living', '교통': 'transport', '쇼핑': 'shopping', '고정지출': 'fixed', '병원': 'medical', '의료': 'medical', '경조사': 'leisure_social', '여가·경조': 'leisure_social', '기타': 'other' };
+  const MAJOR_HINT = { '쿠팡': 'living', '차량유지': 'transport', '주유': 'transport', '주차': 'transport', '통신비': 'fixed', '보험': 'fixed', '구독': 'fixed', '대출': 'fixed', '관리비': 'fixed', '월세': 'fixed', '약국': 'medical', '외식': 'food', '배달': 'food', '여행': 'leisure_social', '문화': 'leisure_social', '선물': 'leisure_social', '여가': 'leisure_social' };
+  // 연결 값: '대분류 id' 또는 { m: id, since: ms }(since 뒤에 만든 기록만 = '새 기록만')
+  function mapTarget(v) { const id = typeof v === 'string' ? v : v && typeof v === 'object' ? v.m : ''; return MAJOR_IDS.includes(id) ? { id, since: v && typeof v === 'object' ? Number(v.since) || 0 : 0 } : null; }
+  function majorOf(t, map) {
+    const c = String(t && t.category || '').trim();
+    if (!c || c === '미분류') return { id: 'other', review: true, source: 'none', hint: '' };
+    if (MAJOR_BY_LABEL[c]) return { id: MAJOR_BY_LABEL[c], review: false, source: 'major' };
+    const m = mapTarget(map && Object.prototype.hasOwnProperty.call(map, c) ? map[c] : null);
+    if (m && (!m.since || (Number(t.created_at) || 0) >= m.since)) return { id: m.id, review: false, source: 'map' };
+    if (MAJOR_TABLE[c]) return { id: MAJOR_TABLE[c], review: false, source: 'table' };
+    return { id: 'other', review: true, source: m ? 'map-new' : 'none', hint: m ? m.id : MAJOR_HINT[c] || '' };
+  }
+  // 대분류별 순지출(합계 보존: 8개의 합 = 전체 순지출). review = 확인 필요 건수
+  function majorTotals(txs, map) {
+    const by = Object.fromEntries(MAJOR_IDS.map(id => [id, 0])); let review = 0, net = 0;
+    txs.forEach(t => { if (t.deleted) return; const r = majorOf(t, map), v = signed(t); by[r.id] += v; net += v; if (r.review) review++; });
+    return { by, net, review };
+  }
+  // 연결 화면 목록: 거래에 실제로 쓴 세부 분류 이름별 건수·순지출·예시 2건·지금 대분류·확인 필요. 대분류 이름 그대로인 분류는 뺀다(이미 명시)
+  function mappingQueue(txs, map, extraNames) {
+    const g = {};
+    const touch = name => g[name] || (g[name] = { name, count: 0, net: 0, examples: [], past: 0 });
+    (extraNames || []).forEach(n => { const s = String(n || '').trim(); if (s && !MAJOR_BY_LABEL[s]) touch(s); });
+    txs.forEach(t => {
+      if (t.deleted) return;
+      const name = String(t.category || '').trim() || '미분류';
+      if (MAJOR_BY_LABEL[name]) return;
+      const x = touch(name); x.count++; x.net += signed(t);
+      if (x.examples.length < 2) x.examples.push(t);
+    });
+    return Object.values(g).map(x => {
+      const r = majorOf({ category: x.name === '미분류' ? '' : x.name, created_at: Number.MAX_SAFE_INTEGER }, map);
+      const old = majorOf({ category: x.name === '미분류' ? '' : x.name, created_at: 0 }, map);
+      return Object.assign(x, { id: r.id, review: r.review || old.review, newOnly: !r.review && old.review, source: r.source, hint: r.hint || MAJOR_HINT[x.name] || '' });
+    }).sort((a, b) => (b.review - a.review) || b.count - a.count || a.name.localeCompare(b.name));
+  }
+
+  /* 월 예산(spec 6절): 공유 설정 prefs의 'bm:YYYY-MM'(그 달만) · 'bt:YYYY-MM'(그 달부터 이후 기본값). 값 = { total, cats: { 대분류 id: 원 }, rev, by, at }.
+   * 그 달 예산 = 그 달 값이 있으면 그것, 없으면 그 달 이전(포함)의 가장 늦은 기본값, 없으면 미설정. 금액 0·빈칸 = 미설정(0원 목표와 구분) */
+  const BM = 'bm:', BT = 'bt:';
+  function normBudget(v) {
+    const total = v && validWon(Number(v.total)) ? Number(v.total) : 0, cats = {};
+    if (v && v.cats && typeof v.cats === 'object') MAJOR_IDS.forEach(id => { const n = Number(v.cats[id]); if (validWon(n)) cats[id] = n; });
+    return { total, cats };
+  }
+  function budgetFor(prefs, ym) {
+    prefs = prefs || {};
+    const own = prefs[BM + ym];
+    if (own && typeof own === 'object') return Object.assign(normBudget(own), { source: 'month', from: ym, rev: Number(own.rev) || 0 });
+    const tk = Object.keys(prefs).filter(k => k.startsWith(BT) && validYm(k.slice(3)) && k.slice(3) <= ym && prefs[k] && typeof prefs[k] === 'object').sort().pop();
+    if (tk) return Object.assign(normBudget(prefs[tk]), { source: 'template', from: tk.slice(3), rev: Number(prefs[tk].rev) || 0 });
+    return { total: 0, cats: {}, source: 'none', from: '', rev: 0 };
+  }
+  const hasMonthBudget = prefs => Object.keys(prefs || {}).some(k => (k.startsWith(BM) || k.startsWith(BT)) && validYm(k.slice(3)) && prefs[k] && typeof prefs[k] === 'object');
+  // 전체 예산이 있으면 대분류 합계 ≤ 전체. 남는 돈 = 미배정(새 예산 항목이 아님). 전체가 없으면 대분류만 정해도 된다
+  function budgetCheck(b) {
+    const allocated = Object.values(b.cats || {}).reduce((s, n) => s + n, 0);
+    return { allocated, ok: !b.total || allocated <= b.total, short: b.total ? Math.max(0, allocated - b.total) : 0, unassigned: b.total ? Math.max(0, b.total - allocated) : 0 };
+  }
+  /* 한 항목(field = 'total' 또는 대분류 id)을 value(0 = 미설정)로. scope 'month' = 그 달만, 'future' = 그 달부터 이후 기본값.
+   * 이후 적용은 시작 달 기본값을 쓰고, 그 달에 따로 정한 값이 있으면 같은 항목을 함께 바꾸며, 더 뒤에 시작하는 기본값도 같은 항목만 바꾼다.
+   * 이미 따로 정한 다른 달(bm)과 지난 달은 그대로. 바꾼 결과 중 하나라도 합계를 넘으면 저장하지 않는다(ok=false, where = 그 달)
+   * 반환 { ok, patch: { 키: 값 | null }, next(그 달 결과), check, where } */
+  function budgetApply(prefs, ym, field, value, scope, meta) {
+    prefs = prefs || {}; meta = meta || {};
+    if (!validYm(ym) || !(field === 'total' || MAJOR_IDS.includes(field))) return { ok: false, patch: {}, error: 'field' };
+    const v = validWon(Number(value)) ? Number(value) : 0;
+    const change = b => { const n = { total: b.total, cats: Object.assign({}, b.cats) }; if (field === 'total') n.total = v; else if (v) n.cats[field] = v; else delete n.cats[field]; return n; };
+    const stamp = (n, old) => Object.assign(n, { rev: (Number(old && old.rev) || 0) + 1, by: String(meta.by || ''), at: Number(meta.at) || 0 });
+    const patch = {}, cur = budgetFor(prefs, ym), next = change(cur), check = budgetCheck(next);
+    if (!check.ok) return { ok: false, patch, next, check, where: ym };
+    if (scope === 'future') {
+      // 시작 달 기본값의 바탕 = 그 달에 적용되던 '기본값'(그 달만 따로 정한 값은 바탕이 아님). 기본값이 없으면 빈 예산에 이 항목만
+      const tk = Object.keys(prefs).filter(k => k.startsWith(BT) && validYm(k.slice(3)) && k.slice(3) <= ym && prefs[k] && typeof prefs[k] === 'object').sort().pop();
+      const tpl = change(tk ? normBudget(prefs[tk]) : { total: 0, cats: {} }), tc = budgetCheck(tpl);
+      if (!tc.ok) return { ok: false, patch: {}, next, check: tc, where: ym };
+      patch[BT + ym] = stamp(tpl, prefs[BT + ym]);
+      if (prefs[BM + ym] && typeof prefs[BM + ym] === 'object') patch[BM + ym] = stamp(change(normBudget(prefs[BM + ym])), prefs[BM + ym]);
+      const later = Object.keys(prefs).filter(k => k.startsWith(BT) && validYm(k.slice(3)) && k.slice(3) > ym && prefs[k] && typeof prefs[k] === 'object').sort();
+      for (const k of later) { const n = change(normBudget(prefs[k])), c = budgetCheck(n); if (!c.ok) return { ok: false, patch: {}, next, check: c, where: k.slice(3) }; patch[k] = stamp(n, prefs[k]); }
+    } else patch[BM + ym] = stamp(next, prefs[BM + ym]);
+    return { ok: true, patch, next, check };
+  }
+  /* 기존 주기 예산(prefs.budget = { total, cats: { 분류 이름: 원 } }) → 월 예산 제안(spec 7.2-4): 같은 대분류는 합산, 연결이 확정되지 않은 분류는 미배정으로 남김.
+   * 전체 금액을 자동으로 늘리지 않는다(over = 분류 합계가 전체보다 큼) */
+  function legacyProposal(legacy, map) {
+    const L = legacy && typeof legacy === 'object' ? legacy : {}, cats = {}, unassigned = [];
+    Object.entries(L.cats || {}).forEach(([name, amt]) => {
+      const n = Number(amt); if (!validWon(n)) return;
+      const r = majorOf({ category: name, created_at: Number.MAX_SAFE_INTEGER }, map);
+      if (r.review) unassigned.push({ name, amount: n }); else cats[r.id] = (cats[r.id] || 0) + n;
+    });
+    const total = validWon(Number(L.total)) ? Number(L.total) : 0, chk = budgetCheck({ total, cats });
+    return { total, cats, unassigned, allocated: chk.allocated, over: !chk.ok, short: chk.short };
+  }
+  // 예산 칸: 빈칸·0 = 미설정(0), 그 밖은 직접 입력 금액 계약(parseWon). 명세서 칸: 0원 청구 허용
+  function parseBudgetWon(v) { const r = parseWon(v); return r.ok ? r : r.error === 'empty' || r.error === 'zero' ? { ok: true, value: 0, error: '', digits: '' } : r; }
+  function parseClaimWon(v) { const r = parseWon(v); return r.ok ? r : r.error === 'zero' ? { ok: true, value: 0, error: '', digits: '0' } : r; }
+  // 쪽 나누기: page(0부터)를 범위 안으로. from~to(끝 제외)
+  function pageOf(count, page, size) {
+    const pages = Math.max(1, Math.ceil((count || 0) / size)), p = Math.min(Math.max(0, Math.floor(Number(page) || 0)), pages - 1);
+    return { page: p, pages, from: p * size, to: Math.min(count || 0, (p + 1) * size), size, count: count || 0 };
+  }
+  // 공유 실패 뒤 자동 재시도 간격(앱이 열려 있는 동안): 30초 → 1분 → 2분 → 4분 → 8분 → 10분(상한)
+  const RETRY_MAX = 600000;
+  const retryDelay = attempt => Math.min(RETRY_MAX, 30000 * Math.pow(2, Math.max(0, (Number(attempt) || 1) - 1)));
+  // 범위·결제수단·대분류로 고른 기록(화면 공통 계약). methods가 배열이면 그 수단만(카드 청구), null이면 모든 수단(월별)
+  function scopeTxs(txs, o) {
+    const ms = Array.isArray(o.methods) ? new Set(o.methods) : null;
+    return txs.filter(t => !t.deleted && (!o.range || (t.date >= o.range.start && t.date <= o.range.end)) && (!ms || ms.has(t.method || ''))
+      && (!o.major || o.major === 'all' || majorOf(t, o.map).id === o.major));
+  }
+  // 명세서 입력 기억 키 = 카드 + 결제일 + 이용 기간(spec 4.4)
+  const billKey = (card, range, pay) => [card || 'all', pay || '', range.start, range.end].join('|');
+
   const core = {
     pad, ymd, parseDate, addDays, dayDiff, cycleRange, signed, shortWon, parseAmount, parseWon, validWon, MAX_WON, normMerchant, merchantMatch,
     splitNotices, parseNotices, suggest, makeSuggester, markDuplicates, typeOf,
     decodeText, parseCsv, detectHeaderRow, guessColumns, toDate, rowsToCandidates,
     filterTxs, summarize,
     validPayDay, payDate, billOf, billCycle, ddayText, cardMethodsOf, payerShares, billSummary, statementDiff,
+    fullDate, validYm, addMonths, monthOf, monthRange, monthOffsetOf, monthCompare, compareNet,
+    MAJORS, MAJOR_IDS, majorLabel, MAJOR_TABLE, MAJOR_HINT, majorOf, majorTotals, mappingQueue,
+    budgetFor, hasMonthBudget, budgetCheck, budgetApply, legacyProposal, parseBudgetWon, parseClaimWon,
+    pageOf, retryDelay, RETRY_MAX, scopeTxs, billKey,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = core;
   else root.core = core;

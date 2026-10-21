@@ -9,7 +9,8 @@
  *             store.list()            지우지 않은 기록 배열
  *             store.get(id)           기록 하나(지운 것 포함)
  *             store.isPending(id)     아직 서버에 안 간 기록인지
- *             store.pendingCount()    공유 대기 건수
+ *             store.pendingCount()    공유 대기 기록 건수(거래 outbox의 고유 id 수)
+ *             store.pendingDetail()   { tx, settings, total } 공유 대기 = 기록 건수 + 설정 변경(묶어서 1건) (v25, spec 12절 N의 정의)
  *   기록      store.upsert(rec)       새 기록/수정 → true|false(기기 저장 실패)
  *             store.upsertMany(recs)  여러 건을 한 번에 저장·전송
  *             store.remove(id)        지운 표시(되돌리기는 upsert로 deleted:false)
@@ -18,7 +19,9 @@
  *             store.prefs()           prefs 객체(없으면 null = 서버 구버전)
  *             store.setPrefs(p)       prefs 일부 키 저장 → true|false(용량 초과·서버 구버전)
  *   기기 설정 store.local(k) / store.setLocal(k, v)   me·view·draft 처럼 이 기기에만 남는 값
- *   동기화    store.sync(), store.status() → { syncing, error, lastSync }
+ *   동기화    store.sync(), store.status() → { syncing, error, lastSync, retryAt, retryN }
+ *             공유가 실패하면 앱이 열린 동안 30초 → 1분 → 2분 … 10분 간격으로 다시 보낸다(v25). 성공하면 간격을 처음으로
+ *   저장 보호 store.persistStorage() → navigator.storage.persist() 요청, 결과는 기기 상태 persist { state, at }(v25)
  *   연결      store.connected(), store.parseCode(text), store.validUrl(url), store.connect(cfg), store.disconnect()
  *   인증      store.auth  (v21 구글 로그인에서 채움)
  *   알림      store.on('change' | 'status' | 'notice', fn)
@@ -40,6 +43,19 @@ const store = (() => {
   const emit = (ev, arg) => listeners[ev].forEach(fn => { try { fn(arg); } catch (e) { console.error(e); } });
   const synced = new Set();
   let syncing = false, syncAgain = false, syncError = '';
+  // 자동 재시도(v25): 대기 중인 기록·설정이 있는데 공유가 실패하면 간격을 두 배씩 늘려 다시 보낸다. core.retryDelay와 같은 간격(데이터 층만 따로 실행될 때를 위해 같은 식을 둠)
+  let retryN = 0, retryTimer = null, retryAt = 0;
+  const retryDelay = n => typeof core !== 'undefined' && core.retryDelay ? core.retryDelay(n) : Math.min(600000, 30000 * Math.pow(2, Math.max(0, n - 1)));
+  const hasPending = () => !!S.cfg && (Object.keys(S.outbox).length > 0 || !!S.pendingSettings);
+  function clearRetry() { if (retryTimer) clearTimeout(retryTimer); retryTimer = null; retryAt = 0; }
+  function scheduleRetry() {
+    clearRetry();
+    if (!hasPending()) { retryN = 0; return; }
+    retryN++;
+    const ms = retryDelay(retryN); retryAt = Date.now() + ms;
+    retryTimer = setTimeout(() => { retryTimer = null; retryAt = 0; sync(); }, ms);
+    if (retryTimer && retryTimer.unref) retryTimer.unref(); // Node 테스트가 타이머 때문에 끝나지 않는 일이 없게
+  }
 
   function normSettings(x) {
     return Object.assign({}, DEFAULT_SETTINGS, x, { cycle_start_day: Number(x && x.cycle_start_day) || 11 });
@@ -129,10 +145,12 @@ const store = (() => {
       if (!S.pendingSettings) S.settings = normSettings(res.settings);
       save();
       if (fillPayers()) syncAgain = true;
+      retryN = 0; clearRetry();
     } catch (e) {
       const why = e.code ? e.code + ' · ' + (e.message || '') : e.name === 'AbortError' ? '30초 응답 없음' : (e.name || '') + ' ' + (e.message || '');
       syncError = e.code === 'unauthorized' ? '설정 코드가 바뀌었어요. 설정 → 설정 코드 바꾸기'
         : navigator.onLine === false ? '' : '공유 실패 (' + why.trim().slice(0, 120) + ') · 기록은 이 기기에 안전해요';
+      if (e.code !== 'unauthorized') scheduleRetry(); else clearRetry(); // 설정 코드가 바뀐 경우는 다시 보내도 같다
     } finally {
       syncing = false;
       emit('change');
@@ -186,6 +204,7 @@ const store = (() => {
   function setPrefs(patch) {
     if (!S.settings.prefs) { emit('notice', '서버 업데이트가 필요해요 (Apps Script 새 버전)'); return false; }
     const prefs = Object.assign({}, S.settings.prefs, patch);
+    Object.keys(patch).forEach(k => { if (patch[k] === null) delete prefs[k]; }); // null = 그 키를 지움(서버 병합에서도 지워진다)
     if (JSON.stringify(prefs).length > PREFS_LIMIT) { emit('notice', '공유 설정 용량이 가득 찼어요. 즐겨찾기를 조금 지워 주세요'); return false; }
     const dirtyBefore = S.prefsDirty;
     S.prefsDirty = [...new Set([...(S.prefsDirty || []), ...Object.keys(patch)])];
@@ -203,6 +222,17 @@ const store = (() => {
   }
   // 편집기에서 만든 코드는 주소가 테스트용(/dev)일 수 있다 → 배포 주소(/exec)만 받는다
   const validUrl = url => /^(https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$|http:\/\/localhost[:/])/.test(url || '');
+  /* 저장 보호(v25): 브라우저가 저장 공간이 부족할 때 이 앱의 기록을 지우지 않게 요청한다. 결과는 이 기기 상태에만 남기고 설정 화면에 보인다.
+   * 지원하지 않거나 거절돼도 앱은 그대로 동작한다(공유되지 않은 기록이 있으면 상태 줄이 계속 알린다) */
+  async function persistStorage() {
+    const st = typeof navigator !== 'undefined' && navigator.storage;
+    let state = 'unsupported';
+    try {
+      if (st && st.persist) { let granted = st.persisted ? await st.persisted() : false; if (!granted) granted = await st.persist(); state = granted ? 'granted' : 'denied'; }
+    } catch (e) { state = 'error'; }
+    S.persist = { state, at: Date.now() }; save(); emit('change');
+    return S.persist;
+  }
   function connect(cfg) { S.cfg = cfg; syncError = ''; save(); emit('change'); sync(); }
   function disconnect() {
     if (Object.keys(S.outbox).length || S.pendingSettings) return false;
@@ -212,11 +242,12 @@ const store = (() => {
 
   return {
     list, get: id => S.txs[id], isPending: id => !!S.outbox[id], pendingCount: () => Object.keys(S.outbox).length,
+    pendingDetail: () => { const tx = Object.keys(S.outbox).length, settings = S.pendingSettings ? 1 : 0; return { tx, settings, total: tx + settings }; },
     upsert: rec => upsertMany([rec]), upsertMany: recs => upsertMany(recs),
     remove: id => !!S.txs[id] && upsertMany([Object.assign({}, S.txs[id], { deleted: true })]),
     settings: () => S.settings, saveSettings, prefs: () => S.settings.prefs || null, setPrefs,
     local: k => S[k], setLocal: (k, v) => { const prev = S[k]; S[k] = v; if (save()) return true; S[k] = prev; return false; }, // 실패하면 메모리도 되돌림
-    sync, status: () => ({ syncing, error: syncError, lastSync: S.lastSync }),
+    sync, status: () => ({ syncing, error: syncError, lastSync: S.lastSync, retryAt, retryN }), persistStorage,
     connected: () => !!S.cfg, parseCode, validUrl, connect, disconnect,
     auth: { method: () => (S.cfg ? 'key' : 'none') },
     on: (ev, fn) => listeners[ev].push(fn),

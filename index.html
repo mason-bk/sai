@@ -132,7 +132,7 @@
   color-scheme: light;
   --bg: #EFF1ED;
   --surface-1: #FFFFFF;
-  --surface-2: #E4E8E0;
+  --surface-2: #E3E7DF;
   --surface-3: #D7DDD3;
   --text-1: #17211D;
   --text-2: #3D4A42;
@@ -165,7 +165,7 @@
   --skeleton-base: #E4E8E0;
   --skeleton-highlight: #EFF1ED;
   --scrim: rgb(10 16 12 / .45);
-  --shadow-card: 0 1px 2px rgb(23 33 29 / .04), 0 6px 20px rgb(23 33 29 / .05);
+  --shadow-card: none; /* 시안 B: 작은 면은 그림자 없이 면 색으로 구분(Astra P1-04) */
   --shadow-sheet: 0 -12px 48px rgb(23 33 29 / .18);
   --shadow-toast: 0 8px 24px rgb(23 33 29 / .22);
   --nav-bg: rgb(239 241 237 / .94);
@@ -179,7 +179,7 @@
   --on-lime: #1B2A23;
   /* 결제자 색(막대·점). 색만으로 구분하지 않고 이름·금액을 함께 쓴다 */
   --p1: #29583B;
-  --p2: #A0782F;
+  --p2: #8A692B;
   --p3: #4F67A3;
   --p4: #9B4D6C;
 }
@@ -188,9 +188,9 @@
   :root:not([data-theme="light"]) {
     color-scheme: dark;
     --bg: #101613;
-    --surface-1: #1B2620;
-    --surface-2: #24312A;
-    --surface-3: #2E3D34;
+    --surface-1: #29362D;
+    --surface-2: #1D2822;
+    --surface-3: #33423A;
     --text-1: #F0F6EE;
     --text-2: #CDD8CB;
     --text-3: #A9B8A9;
@@ -222,7 +222,7 @@
     --skeleton-base: #2E3D34;
     --skeleton-highlight: #34433A;
     --scrim: rgb(0 0 0 / .62);
-    --shadow-card: 0 0 0 1px rgb(240 246 238 / .04);
+    --shadow-card: none;
     --shadow-sheet: 0 -12px 48px rgb(0 0 0 / .45);
     --shadow-toast: 0 8px 24px rgb(0 0 0 / .45);
     --nav-bg: rgb(16 22 19 / .94);
@@ -234,7 +234,7 @@
     --lime: #D7F797;
     --on-lime: #1B2A23;
     --p1: #D7F797;
-    --p2: #E0C793;
+    --p2: #DCC591;
     --p3: #A9BDF5;
     --p4: #F2A7C4;
   }
@@ -243,9 +243,9 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #101613;
-  --surface-1: #1B2620;
-  --surface-2: #24312A;
-  --surface-3: #2E3D34;
+  --surface-1: #29362D;
+  --surface-2: #1D2822;
+  --surface-3: #33423A;
   --text-1: #F0F6EE;
   --text-2: #CDD8CB;
   --text-3: #A9B8A9;
@@ -277,7 +277,7 @@
   --skeleton-base: #2E3D34;
   --skeleton-highlight: #34433A;
   --scrim: rgb(0 0 0 / .62);
-  --shadow-card: 0 0 0 1px rgb(240 246 238 / .04);
+  --shadow-card: none;
   --shadow-sheet: 0 -12px 48px rgb(0 0 0 / .45);
   --shadow-toast: 0 8px 24px rgb(0 0 0 / .45);
   --nav-bg: rgb(16 22 19 / .94);
@@ -289,7 +289,7 @@
   --lime: #D7F797;
   --on-lime: #1B2A23;
   --p1: #D7F797;
-  --p2: #E0C793;
+  --p2: #DCC591;
   --p3: #A9BDF5;
   --p4: #F2A7C4;
 }
@@ -1857,6 +1857,134 @@ dialog,#sheet{background:var(--surface-sheet)}
 .foot-note{margin:8px 0 0;text-align:center;font-size:.75rem;color:var(--text-3)}
 .kbd .foot-note{display:none}
 @media (max-height:600px){.foot-note{display:none}}
+
+/* ---- v24 3차(Fable 재검토 · Astra 디자인 확인) ---- */
+/* 면: 청구 카드도 그림자 없음, 작은 면·칩·보조 버튼은 보조 면 색(그림자 없음) */
+.home-hero.bill{box-shadow:none}
+.page-title .icon-btn,.pt-actions .icon-btn{background:none;box-shadow:none}
+.chip,.filters .chip{background:var(--surface-2);box-shadow:none}
+.chip[aria-pressed=true],.filters .chip[aria-pressed=true]{box-shadow:inset 0 0 0 1.5px var(--brand)}
+.chip-in,.chip-in.duo{background:var(--surface-2);box-shadow:none}
+.seg button[aria-pressed=true]{font-weight:650;box-shadow:0 2px 8px #00000008}
+.theme-seg button{background:var(--surface-2);box-shadow:none}
+.theme-seg button[aria-pressed=true]{box-shadow:inset 0 0 0 2px var(--brand)}
+.cat-pick .cat-grid{gap:8px}
+.cat-pick .cat-grid .cat-cell{background:transparent;box-shadow:none;border:0;border-radius:14px;min-height:64px}
+.cat-pick .cat-grid .cat-cell[aria-pressed=true]{background:var(--text-1);color:var(--bg)}
+/* 머리글 PAYDAY 11px/500, 분담 막대는 바깥만 둥글게 */
+.brand-sub{font-size:.6875rem;font-weight:500;letter-spacing:.12em}
+.split-bar{gap:4px;border-radius:10px}
+.split-bar i{border-radius:0}
+.stmt-block b{font-size:.875rem;font-weight:650}
+.stmt-block small{font-size:.6875rem;line-height:1rem}
+/* 홈: 최근 기록을 명세서 대조 바로 뒤로, 빠른 경로는 기록 뒤 보조 면 두 칸 */
+.home-recent .section-head{margin:12px 0 4px;min-height:44px}
+.home-recent .section-head h2{font-size:1.1875rem;font-weight:700}
+.after-close{display:inline-flex;align-items:center;gap:2px;margin:-4px 0 2px;font-size:.8125rem;font-weight:600}
+.after-close .icon{width:16px;height:16px}
+.quick-grid{margin-top:12px;gap:8px}
+.quick-grid button{background:var(--surface-2);box-shadow:none;border-radius:14px;min-height:48px}
+.due{margin:2px 0 10px}
+.home-hero.bill{padding:18px 20px 14px}
+.home-hero.bill .amt{margin:8px 0 0}
+.bill-bottom{margin-top:10px}
+.split{margin-top:10px;padding:16px 18px 8px}
+.stmt-block{margin-top:10px}
+/* 아래 탭: 기록 원 42px, 돌출·그림자 없음, 라벨 11px */
+nav.tabs button{font-size:.6875rem;font-weight:500}
+nav.tabs button[aria-current=page]{font-weight:750}
+nav.tabs .add-icon{width:42px;height:42px;margin-top:0;box-shadow:none}
+nav.tabs .add-icon .icon{width:22px;height:22px;stroke-width:1.7}
+nav.tabs .plus{font-weight:500}
+/* 달력: 행 46px·간격 2px, 날짜 14/500, 금액 11/500, 선택 반경 10(안쪽 테두리 없음), 오늘은 점, 월초선 없음, 일요일 기본색 */
+.card.cal{padding:8px}
+.cal-head{min-height:52px;padding:0}
+.cal-g:not(.cal-w){row-gap:2px}
+.cal .cal-c{min-height:max(46px,2.875rem);padding:4px 1px 2px;gap:1px}
+.cal .cal-c .cal-d{font-size:.875rem;font-weight:500}
+.cal .cal-c .cal-a{font-size:.6875rem;line-height:.875rem;font-weight:500}
+.cal-w span{font-size:.6875rem;line-height:1rem;padding-bottom:6px}
+.cal .cal-c.sel{border-radius:10px;box-shadow:none}
+.cal .cal-c.today .cal-d{background:none;color:inherit;font-weight:750;min-width:0;padding:0}
+.cal .cal-c.today:not(.sel)::after{content:'';position:absolute;left:50%;bottom:3px;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--brand)}
+.cal .cal-c.sel.today .cal-d{background:none;color:var(--on-brand)}
+.cal .cal-c.m1::before{display:none}
+.cal .cal-c.sun .cal-d,.cal .cal-c.today.sun .cal-d{color:inherit}
+.cal-foot{margin:6px 4px 0}
+.cal-foot .cal-legend{font-size:.75rem;line-height:1.125rem}
+@media (max-width:399px){.cal .cal-c.sel{box-shadow:none}.card.cal{padding:8px 4px}}
+@media (max-width:359px){.card.cal{padding:8px 2px}}
+/* 달력 보기의 결과 합계는 붙지 않는다(달력 머리를 덮지 않게) */
+.results-sticky.cal-static,.screen-list .list-side .results-sticky.cal-static:not(.no-stick){position:static}
+/* 선택일: 날짜·합계 → 거래, 기록 버튼은 오른쪽 작은 글자 버튼 */
+.sel-card{margin-top:12px;padding:12px 16px 4px}
+.cal-sel-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;min-height:44px}
+.cal-sel-l{min-width:0}
+.sel-card .cal-sel{margin:0 0 4px}
+.sel-card .cal-sel-t{font-size:1.125rem;line-height:1.5rem;font-weight:700}
+.sel-card .cal-sel-v{margin:2px 0 0}
+.sel-card .cal-sel-v b{font-size:1rem;line-height:1.5rem;font-weight:650}
+.sel-card .cal-sel-n{font-size:.75rem}
+.cal-add{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:2px;min-width:64px;min-height:44px;margin:-4px -8px 0 0;padding:0 8px;border:0;background:none;color:var(--brand-text);font-size:.8125rem;font-weight:600;border-radius:12px}
+.cal-add .icon{width:16px;height:16px;color:inherit}
+.cal-add:active{background:var(--surface-2)}
+.sel-rows .tx{min-height:64px}
+/* 정기 요약 압축, 매월 고정 합계는 면 밖 접힘 줄 */
+.rules-summary{padding:20px;border-radius:18px}
+.rules-summary .eyebrow{font-size:.75rem;line-height:1.125rem}
+.rules-summary .amt{font-size:2.375rem;line-height:2.875rem;font-weight:700;margin:8px 0}
+.rs-foot{font-size:.75rem;line-height:1.125rem}
+.rs-note{font-size:.75rem;line-height:1.125rem}
+.recur-side>.rules-more{margin-top:8px;border-top:0}
+.recur-side>.rules-more summary{min-height:44px;font-size:.8125rem;font-weight:500}
+.recur-main>.section-head:first-child{margin-top:20px}
+/* 기록 시트: 금액 카드 바로 아래 키패드(작은 화면에서도 12키가 푸터 위에), 거래처 칩 한 줄, 날짜는 2026.10.21 */
+.amount-field{margin-top:8px}
+.amount-card{padding:12px 16px 8px;border-radius:20px}
+.amount-card .amount-in input{font-size:2.5rem;line-height:1.2}
+.amount-field .amount-echo{margin:6px 2px 0}
+.keypad{margin:6px -6px 0;gap:2px}
+.kp{min-height:44px;font-size:1.5625rem;font-weight:500}
+.merchant-field{margin-top:8px}
+.recent-chips{flex-wrap:nowrap;overflow-x:auto;gap:8px;margin-top:8px;scrollbar-width:none;padding-bottom:2px}
+.recent-chips::-webkit-scrollbar{display:none}
+.recent-chips .chip{flex:none;max-width:10em;min-height:44px;padding:0 12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:inline-flex;align-items:center;gap:4px}
+.recent-chips .chip .icon{width:16px;height:16px;flex:none}
+.cat-pick{margin-top:8px}
+.cat-pick>.cat-note{font-size:.75rem;line-height:1.125rem;margin:0 2px 4px}
+.entry-meta{margin-top:8px}
+.date-chip{position:relative;gap:4px;padding:0 10px 0 14px}
+.date-chip .date-txt{font-size:.8125rem;font-weight:500;line-height:44px;white-space:nowrap}
+.date-chip>.icon{width:16px;height:16px;color:var(--text-2)}
+.date-chip input{position:absolute;inset:0;width:100%;height:100%;min-width:0;opacity:0;cursor:pointer}
+#sheet [data-form=entry] details.more{margin-top:4px}
+#sheet [data-form=entry] details.more>summary{min-height:44px;margin:4px 0}
+#sheet [data-form=entry] details.more .sum-lab{font-size:.8125rem;font-weight:500}
+#sheet [data-form=entry] details.more summary .icon{width:18px;height:18px}
+[data-form=entry] .sheet-b{padding-bottom:16px}
+.sheet-footer .btn.save{min-height:52px;border-radius:16px}
+.foot-note{margin:8px 0 0;font-size:.75rem;line-height:1.125rem}
+/* 3차: 첫 화면에 실제 거래가 보이도록 간격 정돈(홈·달력) */
+header.top{min-height:56px}
+.due{margin:0 0 8px}
+.home-recent .section-head{margin:10px 0 4px}
+.after-close{margin:-10px 0 0}
+.due-set{margin:4px 0 12px}
+.screen-list .page-title{margin-bottom:12px}
+.lmode-seg{margin-bottom:8px}
+.results-sticky.cal-static,.screen-list .list-side .results-sticky.cal-static:not(.no-stick),.screen-list .list-side .results-sticky.cal-static.no-stick{padding-top:2px;padding-bottom:2px}
+.cal-static .rs-main{min-height:56px}
+.cal-w span{padding-bottom:2px}
+.cal-foot{margin-top:4px}
+.sel-card{margin-top:8px}
+.sel-parts{margin:4px 0 10px}
+nav.tabs button{min-height:58px}
+.sel-card{padding-top:8px}
+.cal-static .rs-main{min-height:52px}
+.page-sub{margin-top:2px}
+nav.tabs .plus{gap:2px}
+nav.tabs button>span:last-child{line-height:1rem}
+.sel-card .cal-sel-t{line-height:1.375rem}
 </style>
 </head>
 <body>

@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- 보안 정책(Fable P2-7): 실제 쓰는 출처만. 스크립트 = 이 사이트 + 엑셀 읽기 도구(cdnjs, SRI) + 첫 화면 테마 인라인 한 줄(해시), 글꼴 = jsDelivr,
+     연결 = 이 사이트 + Apps Script(script.google.com → script.googleusercontent.com 리디렉트). 화면 코드가 넣는 style 속성 때문에 style은 'unsafe-inline' -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com 'sha256-t4Fwn5mKgx5JN3YyBJ2zqh2LkeDvZ3Vywfda5wRtNGc='; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net; img-src 'self' data: blob:; connect-src 'self' https://script.google.com https://script.googleusercontent.com; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="theme-color" content="#EFF1ED" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#101613" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -11,9 +14,9 @@
 <meta name="apple-mobile-web-app-title" content="사이">
 <title>사이 가계부</title>
 <script>try{var t=(JSON.parse(localStorage.getItem("sai.v1")||"{}")||{}).theme;if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
-<!-- 글꼴: Pretendard(버전 고정·무결성 검사, 필요한 글자 묶음만 받음). 못 받으면(오프라인 등) 시스템 글꼴로 그린다 -->
+<!-- 글꼴: Pretendard(저장소에 있는 정적 CSS v1.3.9 고정·무결성 검사, 필요한 글자 묶음만 받음). 못 받으면(오프라인 등) 시스템 글꼴로 그린다 -->
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" integrity="sha384-GIdEBaqGN9mNkDkMkzMHW8EKUqtpPIe/sLj1X7DIrnc9uPtLROJgmuDlh+3rBw0j" crossorigin="anonymous">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css" integrity="sha384-2nNKoOPayicGa+aRguOQuiZP+RqQ4G3jalfDeOgftkKD7zBM2gJXTwcFqCZltdv0" crossorigin="anonymous">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
@@ -135,7 +138,7 @@
   --text-2: #3D4A42;
   --text-3: #56625A;
   --divider: #D3D9CF;
-  --field-line: #C3CBC0;
+  --field-line: #6E7B72;
   --control: #6E7B72;
   --brand: #29583B;
   --on-brand: #FFFFFF;
@@ -177,8 +180,8 @@
   /* 결제자 색(막대·점). 색만으로 구분하지 않고 이름·금액을 함께 쓴다 */
   --p1: #29583B;
   --p2: #A0782F;
-  --p3: #7F8C84;
-  --p4: #B5C0B7;
+  --p3: #4F67A3;
+  --p4: #9B4D6C;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -192,7 +195,7 @@
     --text-2: #CDD8CB;
     --text-3: #A9B8A9;
     --divider: #34433A;
-    --field-line: #3E4F44;
+    --field-line: #8C9C8D;
     --control: #8C9C8D;
     --brand: #D7F797;
     --on-brand: #18230F;
@@ -232,8 +235,8 @@
     --on-lime: #1B2A23;
     --p1: #D7F797;
     --p2: #E0C793;
-    --p3: #8FA08F;
-    --p4: #5E6E62;
+    --p3: #A9BDF5;
+    --p4: #F2A7C4;
   }
 }
 
@@ -247,7 +250,7 @@
   --text-2: #CDD8CB;
   --text-3: #A9B8A9;
   --divider: #34433A;
-  --field-line: #3E4F44;
+  --field-line: #8C9C8D;
   --control: #8C9C8D;
   --brand: #D7F797;
   --on-brand: #18230F;
@@ -287,8 +290,8 @@
   --on-lime: #1B2A23;
   --p1: #D7F797;
   --p2: #E0C793;
-  --p3: #8FA08F;
-  --p4: #5E6E62;
+  --p3: #A9BDF5;
+  --p4: #F2A7C4;
 }
 
 /* 역할 별칭. 일반 지출액은 본문색으로 통일한다. */
@@ -1559,10 +1562,6 @@ nav.tabs .add-icon .icon{width:26px;height:26px;stroke-width:2.2}
 .home-hero.bill{position:relative;background:var(--ink);color:var(--on-ink);border-radius:24px;padding:18px 20px 16px;margin:0;box-shadow:0 10px 30px color-mix(in srgb,var(--ink) 28%,transparent)}
 .bill-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:-6px -10px 0 0}
 .home-hero.bill .eyebrow{margin:0;font-size:.75rem;line-height:1.5;font-weight:700;letter-spacing:.02em;color:var(--lime)}
-.home-hero.bill .cyc-actions{display:flex;margin:0}
-.home-hero.bill .cyc-actions button{min-width:44px;min-height:44px;border:0;border-radius:50%;background:none;color:var(--ink-2);display:grid;place-items:center}
-.home-hero.bill .cyc-actions button:active{background:var(--ink-press)}
-.home-hero.bill .cyc-actions button:disabled{color:var(--ink-line);opacity:1}
 .home-hero.bill .amt{font-size:2.625rem;line-height:1.2;font-weight:750;letter-spacing:-.05em;margin:6px 0 2px;color:var(--on-ink)}
 .home-hero.bill .amt small{font-size:1.125rem;font-weight:600;margin-left:4px;color:var(--on-ink)}
 .home-hero.bill .period-btn{min-height:44px;margin:0 0 0 -4px;padding:0 4px;color:var(--ink-2);font-size:.8125rem;font-weight:500;background:none;border:0;border-radius:10px}
@@ -1667,9 +1666,6 @@ nav.tabs .add-icon .icon{width:26px;height:26px;stroke-width:2.2}
 .cat-pick .cat-grid .cat-cell[aria-pressed=true]{background:var(--text-1);box-shadow:none}
 .cat-fold{display:flex;margin:6px 0 0 auto}
 @container (max-width:17em){.cat-quick{grid-template-columns:repeat(3,minmax(0,1fr))}.cat-quick .cat-cell:nth-child(n+3):not(.cat-more){display:none}}
-.meta-field{margin-top:16px}
-.meta-field>.lab{font-size:.8125rem;color:var(--text-3)}
-.meta-chips{display:flex;flex-wrap:wrap;gap:8px}
 .chip-in{display:inline-flex;align-items:center;gap:4px;min-height:44px;max-width:100%;padding:0 10px 0 12px;border-radius:999px;background:var(--surface-1);box-shadow:var(--shadow-card);color:var(--text-1);font-size:.875rem;font-weight:600;cursor:pointer}
 .chip-in>.icon{width:18px;height:18px;flex:none;color:var(--text-2)}
 .chip-in>.icon:last-child:not(:first-child){width:16px;height:16px}
@@ -1677,7 +1673,6 @@ nav.tabs .add-icon .icon{width:26px;height:26px;stroke-width:2.2}
 .chip-in.lead input{min-width:7.5em}
 .chip-in input[type=date]::-webkit-calendar-picker-indicator{display:none}
 .chip-in:focus-within{box-shadow:inset 0 0 0 2px var(--brand)}
-.meta-hint{margin:8px 2px 0;font-size:.75rem}
 #sheet .more{margin-top:12px}
 .sheet-footer .btn.save{gap:6px}
 
@@ -1798,6 +1793,70 @@ dialog,#sheet{background:var(--surface-sheet)}
 .stmt-res .icon{width:20px;height:20px;flex:none;color:var(--brand-text);margin-top:1px}
 .stmt-res b{color:var(--text-1)}
 .stmt-menu{margin-top:18px}
+
+/* ---- v24 수정(Mason "시안대로" · Fable 검토) ---- */
+/* 머리글: 카드 아이콘 + 사이 + PAYDAY, 오른쪽에 화면 모드 버튼과 두 사람 이니셜 */
+.brand{gap:7px;font-size:1.4375rem}
+.brand>.icon{width:25px;height:25px;stroke-width:2;color:var(--text-1)}
+.brand-sub{font-size:.6875rem;font-weight:700;letter-spacing:.1em;color:var(--text-2);padding-left:2px}
+.top-r{display:flex;align-items:center;gap:2px}
+.theme-btn{width:44px;height:44px;border-radius:50%;border:0;background:none;color:var(--text-1)}
+.theme-btn .icon{width:22px;height:22px}
+.who{min-width:44px;min-height:44px;padding:0 2px;background:none;border:0;border-radius:999px}
+.who .avatar-pair{display:flex}
+.who .avatar{width:30px;height:30px;font-size:.6875rem;border-width:2px}
+.who .avatar.a2{margin-left:-7px}
+/* 청구서 카드(시안 B 문구·배치) */
+.bill-top{margin:0}
+.home-hero.bill{padding:20px 22px 16px}
+.bill-chip{flex:none;min-height:44px;margin:-8px -8px -8px 0;padding:0 8px;border:0;background:none;display:inline-flex;align-items:center}
+.bill-chip::before{content:none}
+.bill-chip{color:var(--on-lime);font-size:.75rem;font-weight:750;position:relative;z-index:0}
+.bill-chip::after{content:'';position:absolute;z-index:-1;left:0;right:0;top:50%;height:30px;translate:0 -50%;border-radius:999px;background:var(--lime)}
+.home-hero.bill .amt{margin:12px 0 0}
+.home-hero.bill .period-btn{margin-top:2px}
+.bill-note{margin:0;font-size:.75rem;line-height:1.5;color:var(--ink-2)}
+.bill-bottom{margin-top:14px;padding-top:4px;font-size:.8125rem;color:var(--on-ink)}
+.bill-bottom>span{padding-top:4px}
+/* 홈 기록: 시안처럼 면 카드 없이 바탕 위 짧은 행, 아이콘 칸은 흰 면 */
+.home-recent .list-card.recent{background:none;box-shadow:none;padding:0}
+.home-recent .recent .swipe .tx,.home-recent .recent .tx{background:var(--bg)}
+.home-recent .recent .tx .ic{background:var(--surface-1)}
+.home-recent .recent .swipe::after{display:none}
+.home-recent .section-head{margin-top:26px}
+.split{border-radius:19px;padding:18px 18px 10px}
+.stmt-block{border-radius:16px;min-height:73px}
+/* 기록 시트(시안 B): 머리 오른쪽 알림 붙여넣기, 결제자·결제수단 칩 하나 + 즐겨찾기, 날짜 줄, 화면 키패드 */
+.sh-r{display:flex;align-items:center;gap:4px;flex:none}
+.sh-r .paste-link{font-size:.8125rem;font-weight:600;min-height:44px;color:var(--brand-text)}
+.sh-r .paste-link .icon{width:17px;height:17px}
+.sheet-h{flex-wrap:wrap}
+.sheet-h .sh-l{flex:1 1 auto}
+.merchant-field{margin-top:12px}
+.merchant-field .in{background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--field-line)}
+.cat-pick{margin-top:10px}
+.cat-pick>.cat-note{display:block;margin:0 2px 4px;text-align:right}
+.cat-pick .cat-cell[aria-pressed=true]{border-radius:16px}
+.entry-meta{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 12px;margin-top:10px}
+.chip-in.duo{background:var(--surface-2);box-shadow:none;gap:2px}
+.chip-in.duo select{min-width:44px;padding:0 4px;field-sizing:content}
+.duo-sep{color:var(--text-3)}
+.fav-link{font-size:.8125rem;font-weight:600;color:var(--brand-text)}
+.fav-link .icon{width:17px;height:17px}
+.entry-date{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;margin-top:6px}
+.chip-in.plain{background:none;box-shadow:none;padding:0 6px 0 2px}
+.chip-in.plain input{min-width:8.5em;font-weight:500;font-size:.875rem}
+.entry-date .meta-hint{margin:0;font-size:.75rem;color:var(--text-3)}
+.keypad{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px;margin:6px -8px 4px}
+.kp{min-height:max(48px,2.75rem);border:0;border-radius:12px;background:none;color:var(--text-1);font-size:1.5625rem;font-weight:500;font-variant-numeric:tabular-nums;display:grid;place-items:center}
+.kp .icon{width:24px;height:24px}
+.kp:active{background:var(--surface-2)}
+@media (prefers-reduced-motion:no-preference){.kp{transition:background-color 120ms var(--ease-standard)}}
+[data-form=entry].kp-off .keypad,.kbd [data-form=entry] .keypad{display:none}
+.amount-card{cursor:text}
+.foot-note{margin:8px 0 0;text-align:center;font-size:.75rem;color:var(--text-3)}
+.kbd .foot-note{display:none}
+@media (max-height:600px){.foot-note{display:none}}
 </style>
 </head>
 <body>

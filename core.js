@@ -11,7 +11,7 @@
  *   파일         decodeText(bytes), parseCsv(text), detectHeaderRow(rows), guessColumns(header, rows),
  *                rowsToCandidates(rows, mapping, opts) → { items, unread }
  *   필터·합계    filterTxs(txs, filter, range), summarize(txs)
- *   카드값(v24)  payDate(cycleEnd, payDay), billOf(startDay, payDay, offset, now), billCycle(startDay, payDay, now), ddayText(days),
+ *   카드값(v24)  payDate(range, payDay, startDay), billOf(startDay, payDay, offset, now), billCycle(startDay, payDay, now), ddayText(days),
  *                cardMethodsOf(methods, chosen), payerShares(entries), billSummary(txs, range, cardMethods, payers), statementDiff(ledger, statement)
  * ===================================================================== */
 (function (root) {
@@ -544,22 +544,22 @@
    * 집계 시작일(cycle_start_day)과 결제일(pay_day)은 다른 값이다. 시작일은 '이용 기간'의 첫날, 결제일은 그 기간의 카드값이 빠져나가는 날.
    * 여기 금액은 모두 '장부 기준'(이 앱에 적은 기록의 합)이며 카드사 청구 확정액이 아니다. */
   const validPayDay = v => { const n = Number(v); return Number.isInteger(n) && n >= 1 && n <= 31 ? n : 0; };
-  // 결제일 = 이용 기간 끝 다음 날부터 처음 오는 매월 payDay일(29~31일은 그날이 없는 달엔 말일). 결제일이 없으면 ''
-  function payDate(cycleEnd, payDay) {
+  // 결제일 = 이용 기간 시작 달의 다음 달 payDay일(결제일이 시작일보다 앞이면 다다음 달). 29~31일은 그날이 없는 달엔 말일.
+  // '주기 끝 다음에 처음 오는 그날'로 정하면 결제일이 시작일 1~3일 앞(29/28, 31/30 등)일 때 짧은 달 때문에 한 달을 건너뛰거나
+  // 주기 끝 바로 다음 날이 되는 문제가 있어(Fable P2-1), 시작일·결제일 설정값으로 달 간격을 한 번 정해 모든 주기에 같게 적용한다.
+  // 국내 카드 이용 기간표(1일 결제 = 전전월 18일~전월 17일, 14일 = 전월 1일~말일, 25일 = 전월 12일~당월 11일 등)와 같은 결과. 결제일이 없으면 ''
+  function payDate(range, payDay, startDay) {
     const day = validPayDay(payDay);
-    if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(String(cycleEnd || ''))) return '';
-    const e = parseDate(cycleEnd);
-    for (let k = 0; k < 3; k++) {
-      const y = e.getFullYear(), m = e.getMonth() + k;
-      const s = ymd(new Date(y, m, Math.min(day, new Date(y, m + 1, 0).getDate())));
-      if (s > cycleEnd) return s;
-    }
-    return '';
+    if (!day || !range || !/^\d{4}-\d{2}-\d{2}$/.test(String(range.start || '')) || !/^\d{4}-\d{2}-\d{2}$/.test(String(range.end || ''))) return '';
+    const sd = validPayDay(startDay) || Number(range.start.slice(8)), s = parseDate(range.start);
+    const y = s.getFullYear(), m = s.getMonth() + (day >= sd ? 1 : 2);
+    const p = ymd(new Date(y, m, Math.min(day, new Date(y, m + 1, 0).getDate())));
+    return p > range.end ? p : '';
   }
   // 한 주기(offset)의 청구 정보. due = 결제일(없으면 주기 끝), days = 오늘부터 due까지 남은 날(지났으면 음수)
   function billOf(startDay, payDay, offset, now) {
     now = now || new Date();
-    const td = ymd(now), range = cycleRange(startDay, offset, now), pd = validPayDay(payDay), p = pd ? payDate(range.end, pd) : '';
+    const td = ymd(now), range = cycleRange(startDay, offset, now), pd = validPayDay(payDay), p = pd ? payDate(range, pd, startDay) : '';
     const due = p || range.end;
     return { offset: offset || 0, range, payDate: p, due, days: dayDiff(td, due), closed: range.end < td, hasPayDay: !!pd };
   }

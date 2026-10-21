@@ -11,6 +11,8 @@
  *   파일         decodeText(bytes), parseCsv(text), detectHeaderRow(rows), guessColumns(header, rows),
  *                rowsToCandidates(rows, mapping, opts) → { items, unread }
  *   필터·합계    filterTxs(txs, filter, range), summarize(txs)
+ *   카드값(v24)  payDate(cycleEnd, payDay), billOf(startDay, payDay, offset, now), billCycle(startDay, payDay, now), ddayText(days),
+ *                cardMethodsOf(methods, chosen), payerShares(entries), billSummary(txs, range, cardMethods, payers), statementDiff(ledger, statement)
  * ===================================================================== */
 (function (root) {
   const pad = n => String(n).padStart(2, '0');
@@ -538,11 +540,78 @@
     return s;
   }
 
+  /* ===== 카드값 (v24): 결제일 · 장부 기준 카드값 · 결제자별 몫 · 명세서 대조 =====
+   * 집계 시작일(cycle_start_day)과 결제일(pay_day)은 다른 값이다. 시작일은 '이용 기간'의 첫날, 결제일은 그 기간의 카드값이 빠져나가는 날.
+   * 여기 금액은 모두 '장부 기준'(이 앱에 적은 기록의 합)이며 카드사 청구 확정액이 아니다. */
+  const validPayDay = v => { const n = Number(v); return Number.isInteger(n) && n >= 1 && n <= 31 ? n : 0; };
+  // 결제일 = 이용 기간 끝 다음 날부터 처음 오는 매월 payDay일(29~31일은 그날이 없는 달엔 말일). 결제일이 없으면 ''
+  function payDate(cycleEnd, payDay) {
+    const day = validPayDay(payDay);
+    if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(String(cycleEnd || ''))) return '';
+    const e = parseDate(cycleEnd);
+    for (let k = 0; k < 3; k++) {
+      const y = e.getFullYear(), m = e.getMonth() + k;
+      const s = ymd(new Date(y, m, Math.min(day, new Date(y, m + 1, 0).getDate())));
+      if (s > cycleEnd) return s;
+    }
+    return '';
+  }
+  // 한 주기(offset)의 청구 정보. due = 결제일(없으면 주기 끝), days = 오늘부터 due까지 남은 날(지났으면 음수)
+  function billOf(startDay, payDay, offset, now) {
+    now = now || new Date();
+    const td = ymd(now), range = cycleRange(startDay, offset, now), pd = validPayDay(payDay), p = pd ? payDate(range.end, pd) : '';
+    const due = p || range.end;
+    return { offset: offset || 0, range, payDate: p, due, days: dayDiff(td, due), closed: range.end < td, hasPayDay: !!pd };
+  }
+  // 다가오는 청구: 결제일이 오늘이거나 아직 오지 않은 가장 이른 주기. 결제일이 없으면 이번 주기(주기 끝까지 남은 날)
+  function billCycle(startDay, payDay, now) {
+    now = now || new Date();
+    if (!validPayDay(payDay)) return billOf(startDay, 0, 0, now);
+    for (let k = -3; k < 0; k++) { const b = billOf(startDay, payDay, k, now); if (b.days >= 0) return b; }
+    return billOf(startDay, payDay, 0, now); // 이번 주기의 결제일은 항상 주기 끝 뒤 = 오늘 뒤
+  }
+  // 남은 날 문구: 0 → 오늘, 1 → 내일, n → D-n, 지난 날 → n일 지남
+  const ddayText = days => days === 0 ? '오늘' : days === 1 ? '내일' : days > 0 ? 'D-' + days : -days + '일 지남';
+  // 카드값에 넣을 결제수단: 공유 설정에서 고른 목록이 있으면 그대로, 없으면 이름에 '카드'가 든 수단, 그것도 없으면 현금·이체류를 뺀 수단
+  const CASH_LIKE = /현금|이체|계좌|송금|입금|상품권|cash|transfer|bank/i;
+  function cardMethodsOf(methods, chosen) {
+    if (Array.isArray(chosen)) return [...new Set(chosen.map(String))];
+    const list = [...new Set((methods || []).map(m => String(m || '').trim()).filter(Boolean))];
+    const named = list.filter(m => /카드|card/i.test(m));
+    return named.length ? named : list.filter(m => !CASH_LIKE.test(m));
+  }
+  // 결제자별 몫: 순지출(환불 뺀 값) 기준 비율. 0 이하인 사람은 0%, 비율 합은 정확히 100(최대 나머지 방식)
+  function payerShares(entries) {
+    const pos = entries.map(e => Math.max(0, e[1])), total = pos.reduce((a, b) => a + b, 0);
+    const pct = pos.map(v => total ? Math.floor(v / total * 100) : 0);
+    if (total) {
+      let left = 100 - pct.reduce((a, b) => a + b, 0);
+      pos.map((v, i) => [v / total * 100 - pct[i], i]).sort((a, b) => b[0] - a[0] || a[1] - b[1])
+        .forEach(([, i]) => { if (left > 0 && pos[i] > 0) { pct[i]++; left--; } });
+    }
+    return entries.map((e, i) => ({ name: e[0], amount: e[1], pct: pct[i] }));
+  }
+  // 장부 기준 카드값: 범위 안, 카드 결제수단, 지출 제외(이체·카드대금)는 뺌, 환불은 차감. 카드에 안 들어간 기록(현금 등)은 outside로 따로 센다
+  function billSummary(txs, range, cardMethods, payers) {
+    const card = new Set(cardMethods || []), inRange = txs.filter(t => !t.deleted && t.date >= range.start && t.date <= range.end && t.type !== 'transfer');
+    const list = inRange.filter(t => card.has(t.method || '')), rest = inRange.filter(t => !card.has(t.method || ''));
+    const s = summarize(list), by = {};
+    list.forEach(t => { const p = t.payer || '공동'; by[p] = (by[p] || 0) + signed(t); });
+    const order = [...(payers || []), ...Object.keys(by)].filter((p, i, a) => a.indexOf(p) === i && p in by);
+    return Object.assign(s, { txs: list, shares: payerShares(order.map(p => [p, by[p]])), outside: { count: rest.length, net: rest.reduce((a, t) => a + signed(t), 0) } });
+  }
+  // 명세서 대조: 카드사 청구 금액 - 장부 기준 카드값. missing = 장부가 적음(빠진 기록), extra = 장부가 많음(중복·다른 카드·다음 달 청구)
+  function statementDiff(ledger, statement) {
+    const d = Math.round(statement) - Math.round(ledger);
+    return { diff: d, abs: Math.abs(d), kind: d === 0 ? 'match' : d > 0 ? 'missing' : 'extra' };
+  }
+
   const core = {
     pad, ymd, parseDate, addDays, dayDiff, cycleRange, signed, shortWon, parseAmount, parseWon, validWon, MAX_WON, normMerchant, merchantMatch,
     splitNotices, parseNotices, suggest, makeSuggester, markDuplicates, typeOf,
     decodeText, parseCsv, detectHeaderRow, guessColumns, toDate, rowsToCandidates,
     filterTxs, summarize,
+    validPayDay, payDate, billOf, billCycle, ddayText, cardMethodsOf, payerShares, billSummary, statementDiff,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = core;
   else root.core = core;

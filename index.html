@@ -1107,9 +1107,6 @@ nav.tabs button{font-size:.8125rem}
   .recur-main>.section-head:first-child{margin-top:0}
   nav.tabs{max-width:none;left:var(--safe-l);right:var(--safe-r);padding-inline:max(8px,calc((100% - 560px) / 2))}
   @media (min-width:520px){nav.tabs{border-inline:0}}
-  /* 넓은 칸에서는 최근 기록을 더 보여 준다 */
-  .home-recent .recent .swipe:nth-child(n+4){display:block}
-  .home-recent .recent .swipe:nth-child(3):not(:last-child)::after{display:block}
   /* 시트: 화면 가운데 떠 있는 창(높이는 내용만큼, 키보드 위까지) */
   #sheet,#sheet.filter-sheet{inset:var(--sheet-top) 0 auto 0;margin:0 auto;width:min(480px,calc(100% - 48px));max-width:480px;height:auto;transform:none;
     max-height:calc(var(--vvh,100dvh) - (var(--sheet-top) - var(--vvt,0px)) - max(24px,var(--safe-b)));border-radius:var(--r-sheet)}
@@ -1156,7 +1153,6 @@ nav.tabs button{font-size:.8125rem}
 }
 
 /* v22 점검 보정 */
-.recent .swipe:nth-child(n+4){display:none}.recent .swipe:nth-child(3)::after{display:none}
 span.num.frac{white-space:normal}.frac>span{white-space:nowrap}
 .axis{font-size:min(.6875rem,13px)}.val{font-size:min(.625rem,12px)}
 .budget-in input{width:calc(9ch + 8px);max-width:40vw}
@@ -1460,7 +1456,6 @@ html{scroll-padding-top:var(--sticky-h,0px)}
 .cal-add:active{background:var(--surface-3)}
 .cal-sel-sub{margin:4px 0 0;font-size:var(--fs-caption);line-height:1.5;color:var(--text-3)}
 .list-main>.cal-sel:first-child{margin-top:4px}
-.sum-line.is-folded{display:none}
 .icon-btn.has-n{position:relative}
 .n-badge{position:absolute;top:4px;right:4px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--brand);color:var(--on-brand);font-size:.6875rem;line-height:18px;font-weight:700;text-align:center}
 /* v23 기록: 분류는 아이콘+이름 격자(위플·편한가계부·Money Lover 공통 패턴). 순서는 설정 순서 고정, 큰 글자는 칸 수를 줄임 */
@@ -2023,12 +2018,12 @@ header.top{min-height:56px}
 .utabs button{flex:1 1 0;min-width:0;min-height:46px;padding:0 6px;border:0;border-bottom:3px solid transparent;margin-bottom:-1px;background:none;color:var(--text-3);font:inherit;font-size:.9375rem;font-weight:500;line-height:1.25rem}
 .utabs button[aria-pressed=true]{color:var(--brand-text);border-bottom-color:var(--brand);font-weight:700}
 .utabs .ut-n{font-size:.8125rem;color:inherit;opacity:.8}
-/* 쪽 넘김 */
-.pager{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:8px;margin:4px 0 0}
-.pg-btn{min-height:44px;min-width:56px;padding:0 10px;border:0;border-radius:12px;background:none;color:var(--brand-text);font:inherit;font-size:.875rem;font-weight:650}
-.pg-btn:disabled{color:var(--text-3);opacity:.6}
-.pg-btn:active{background:var(--surface-3)}
-.pg-n{text-align:center;font-size:.8125rem;color:var(--text-3)}
+/* v26 더 보기(쪽 넘김 대신 같은 목록 뒤에 이어 붙임): 52px, 위 16px, 건수는 오른쪽 */
+.list-more{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:52px;margin:16px 0 0;padding:12px 16px;border:0;border-radius:16px;background:var(--surface-2);color:var(--brand-text);font:inherit;font-size:1rem;line-height:1.5rem;font-weight:700;text-align:center}
+.list-more .lm-n{font-size:.875rem;line-height:1.3125rem;font-weight:600;color:var(--text-2)}
+.list-more .icon{width:18px;height:18px;flex:none}
+.list-more:active{background:var(--surface-3)}
+.list-end{margin:16px 0 0;font-size:.875rem;line-height:1.3125rem;color:var(--text-3);text-align:center}
 /* 홈: 합계 면(청구 카드 20px 반경, 좌우 18·상하 14) */
 .home-hero.h25,.home-hero.h25.bill{position:relative;background:var(--ink);color:var(--on-ink);border-radius:20px;padding:14px 18px;margin:0 0 6px;box-shadow:none}
 .home-hero.h25 .hero-top{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:28px;margin:0}
@@ -2071,7 +2066,6 @@ header.top{min-height:56px}
 .home-recent .recent .swipe,.home-recent .recent .swipe .tx,.rows-card .swipe,.rows-card .swipe .tx,.sel-rows .swipe,.sel-rows .swipe .tx,.recur-main .list-card .swipe,.recur-main .list-card .swipe .tx{min-height:56px}
 .home-recent .recent .swipe .tx{background:var(--bg)}
 .home-recent .recent .tx .ic{background:var(--surface-1)}
-.home-recent .recent .swipe:nth-child(n+3){display:none}
 .home-recent .recent .empty{padding:14px 0 6px}
 .home-links{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:2px 0 0}
 .home-links .link,.home-info .link,.home-cats .link{display:inline-flex;align-items:center;gap:2px;font-size:.875rem;font-weight:650;color:var(--brand-text)}
@@ -2199,10 +2193,6 @@ header.top{min-height:56px}
 .screen-settings .page-title,.screen-recur .page-title{margin:0 0 4px}
 .screen-settings .page-title h1,.screen-recur .page-title h1{font-size:1.5rem;line-height:1.9375rem;font-weight:700;min-height:44px;display:flex;align-items:center}
 /* 기록: 기본 / 상세 */
-.entry-seg{margin:10px 0 0}
-.entry-seg .es-sum{display:block;font-size:.75rem;line-height:1rem;font-weight:500;color:var(--text-3);overflow-wrap:anywhere}
-.entry-seg .es-sum:empty{display:none}
-[data-form=entry].stage-basic .ep-more,[data-form=entry].stage-more .ep-basic{display:none}
 .ep-more{padding-top:6px}
 .dcats .chip{display:inline-flex;align-items:center;gap:6px}
 .dcats .chip small{font-size:.75rem;color:var(--text-3)}
@@ -2223,7 +2213,6 @@ header.top{min-height:56px}
   .screen-home #view{display:grid;grid-template-columns:400px minmax(0,1fr);column-gap:24px;align-items:start}
   .screen-home #view{grid-template-columns:minmax(0,400px) minmax(0,1fr)}
   .home-top{grid-column:1;grid-row:1}.home-recent{grid-column:2;grid-row:1;margin-top:0}
-  .home-recent .recent .swipe:nth-child(n+3){display:block}
   .screen-analysis #view{display:block;max-width:720px}
 }
 @media (min-width:1180px){.screen-home #view{grid-template-columns:400px minmax(0,1fr)}.home-cats{grid-column:auto;grid-row:auto}}
@@ -2242,7 +2231,7 @@ header.top{min-height:56px}
 .home-recent{container-type:inline-size}
 @container (max-width:300px){.bar-line{grid-template-columns:minmax(0,1fr) auto}.bar-line .bl-track{grid-column:1 / -1;grid-row:2}}
 .stmt-tools{flex-wrap:wrap}.stmt-tools button{flex:1 1 auto}
-@media (max-height:620px){.entry-seg{margin-top:4px}.entry-seg.seg{padding:0}
+@media (max-height:620px){
   .amount-field{margin-top:6px}.amount-card{padding:8px 16px 6px}.amount-card .amount-in input{font-size:2.25rem}
   .amount-echo:empty,.entry-ctx:empty,.amount-field .err:empty{display:none}.amount-echo{margin:2px 0 0;min-height:0}.entry-ctx{margin:0;min-height:0}}
 .stmt-ctx>span.num{white-space:normal}
@@ -2258,11 +2247,6 @@ header.top{min-height:56px}
 .period-opt{min-height:104px;padding:12px;grid-template-columns:minmax(0,1fr) 24px}
 .period-opt .po-tag{font-size:.75rem;line-height:1.25rem}
 /* 내역 필터 4탭·가져오기 열 연결 3탭·확인 목록 3건/쪽: 다른 묶음은 숨김 */
-.lf-body .filter-section{display:none}
-.lft-period #lf-period,.lft-cats #lf-cats,.lft-pay #lf-payers,.lft-pay #lf-methods,.lft-etc #lf-amount,.lft-etc #lf-kind{display:block}
-.lf-body .utabs{position:sticky;top:0;z-index:1;background:var(--surface-1)}
-.mt-sec{display:none}.mapt-cols .mt-cols,.mapt-preview .mt-preview,.mapt-more .mt-more{display:block}
-.import-row.pg-off{display:none}
 /* 기록: 대분류 8개를 4열×2행으로 늘 보임, 금액 칸 64px 이상(휴대폰 숫자 키보드) */
 .cat-pick .cat-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
 .cat-pick.open .cat-grid .cat-cell{min-height:56px;height:auto}
@@ -2324,6 +2308,183 @@ nav.tabs button[aria-current=page]{color:var(--brand)} /* 선택색 #29583B / �
 .danger-t{color:var(--expense)}
 /* v25 4차: 짙은 금액 카드 위 입력 방식 전환은 라임(#D7F797, 대비 12:1 이상), 포커스 링도 라임 */
 .kp-mode:focus-visible{outline:2px solid var(--lime);outline-offset:2px}
+/* ===== v26 (Astra v26-spacing-spec 2026-10-22, 실사용 피드백 "한 화면에 다 맞추려니 더 어색하다"): 한 화면 원칙 완화 =====
+   첫 화면 = 핵심(보기 전환·기간·금액·주 버튼), 아래로 약 한 화면(390×844에서 추가 스크롤 760px 이하)까지 이어서 읽는다.
+   섹션 32 · 같은 목적 16 · 제목과 내용 12 · 폼 필드 24. 높이는 모두 최소값(긴 이름·큰 글자에서 늘어남). 글자는 rem(사용자 확대 존중).
+   이 블록이 아래 컴포넌트들의 최종 정의다(이전 v21~v25의 같은 선택자 값을 대체). 색·면·그림자 토큰은 v25 그대로 */
+:root{--section-gap:32px;--group-gap:16px;--field-gap:24px;--row-min:76px;--settings-row-min:72px}
+/* 보기 전환 · 기간 · 대분류 · 검색 · 도구 줄: 묶음 아래 16 */
+.view-seg{margin:0 0 16px;padding:4px;min-height:52px}
+.view-seg button{min-height:44px;font-size:1rem}
+.period-nav,.period-nav.bud-nav{margin:0 0 16px}
+.period-nav .period-lbl,.cal-head .cal-lbl{min-height:64px;gap:4px;padding:4px 0}
+.period-nav .period-lbl b,.cal-head .cal-lbl b{font-size:1.125rem;line-height:1.625rem}
+.period-nav .period-lbl small,.cal-head .cal-lbl small{font-size:.875rem;line-height:1.3125rem}
+.mchips{gap:8px;margin:0 0 16px}
+.mchip{font-size:1rem}
+.search-row,.list-tools,.filter-toolbar{margin:0 0 16px}
+.utabs{margin:0 0 16px}
+.utabs button{min-height:52px;font-size:1rem}
+/* 섹션: 독립 섹션 사이 32, 제목 18/26, 제목과 내용 12, 버튼이 있는 제목 줄 44 */
+.section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;margin:0 0 12px}
+.section-head h2,.set-h{margin:0;font-size:1.125rem;line-height:1.625rem;font-weight:700;letter-spacing:-.02em}
+.section-head .link{display:inline-flex;align-items:center;gap:4px;min-height:44px;font-size:.9375rem;font-weight:650;color:var(--brand-text)}
+.section-head .link .icon{width:18px;height:18px}
+.h2sub{font-size:.875rem;font-weight:500;color:var(--text-3)}
+.sub-h{margin:0 0 12px;font-size:1rem;line-height:1.5rem;font-weight:700}
+.home-sec,.an-sec,.bud-sec,.recur-sec,.set-sec{margin-top:var(--section-gap)}
+.home-recent .section-head,.home-sec .section-head{margin:0 0 12px}
+.set-sec:first-of-type{margin-top:16px}
+.set-h{margin:0 0 12px}
+/* 홈 핵심 카드 24/20, 금액 38/48, 메타·버튼 사이 16 */
+.home-hero.h25,.home-hero.h25.bill{padding:24px 20px;margin:0 0 16px}
+.home-hero.h25 .eyebrow,.home-hero.h25 .hero-sub,.home-hero.h25 .dday{font-size:.875rem;line-height:1.3125rem}
+.home-hero.h25 .amt{margin:8px 0 12px;font-size:2.375rem;line-height:3rem}
+.home-hero.h25 .hero-meta{margin:0 0 16px;gap:12px}
+.home-hero.h25 .hm-t,.home-hero.h25 .hero-cmp,.home-hero.h25 .hero-range,.home-hero.h25 .hero-meta-t{font-size:.875rem;line-height:1.3125rem}
+.home-hero.h25 .hero-range{margin-top:8px}
+.home-hero.h25 .hero-link{font-size:.9375rem}
+.home-hero.h25 .hero-cta{min-height:52px;margin-top:0;padding:12px 16px;font-size:1rem}
+.home-hero.h25 .hero-btns{gap:8px 12px;margin-top:16px}
+@media (max-width:359px){.home-hero.h25 .amt{font-size:2.125rem;line-height:2.75rem}}
+/* 홈 예산 요약 84 */
+.budget-row{min-height:84px;margin:0;padding:16px;gap:12px}
+.budget-row .br-t b{font-size:1rem;line-height:1.5rem}
+.budget-row .br-t small{font-size:.875rem;line-height:1.3125rem}
+.budget-row .br-act{font-size:.9375rem}
+/* 홈 아래: 기록 → 기록 더 보기 → 청구 안내 / 상위 3개 분류 */
+.home-recent{margin-top:var(--section-gap)}
+.home-info{gap:4px;padding:0}
+.home-info .hi-box{margin:0 0 8px;padding:16px 20px;border-radius:16px;background:var(--surface-2);font-size:.9375rem;line-height:1.5rem}
+.home-info .muted{font-size:.875rem;line-height:1.3125rem}
+.home-info .link,.home-cats .link{min-height:44px;font-size:.9375rem}
+.home-cats{padding:0}
+.home-cats .bar-line{padding-inline:0}
+/* 거래 행: 최소 76, 상하 14, 아이콘 38, 열 간격 12, 이름·금액 16/24, 메타 14/21 */
+.home-recent .recent .tx,.rows-card .tx,.sel-rows .tx,.recur-main .list-card .tx,#sheet .list-card .tx,.recur-sec .list-card .tx{min-height:76px;padding-block:14px;column-gap:12px;grid-template-columns:38px minmax(0,1fr) auto}
+.home-recent .recent .tx.stack,.rows-card .tx.stack,.sel-rows .tx.stack,.recur-main .list-card .tx.stack,#sheet .list-card .tx.stack,.recur-sec .list-card .tx.stack{grid-template-columns:38px minmax(0,1fr)}
+.home-recent .recent .tx .ic,.rows-card .tx .ic,.sel-rows .tx .ic,.recur-main .list-card .tx .ic,#sheet .list-card .tx .ic{width:38px;height:38px;border-radius:12px}
+.home-recent .recent .tx .ic .icon,.rows-card .tx .ic .icon,.sel-rows .tx .ic .icon{width:20px;height:20px}
+.home-recent .recent .swipe,.home-recent .recent .swipe .tx,.rows-card .swipe,.rows-card .swipe .tx,.sel-rows .swipe,.sel-rows .swipe .tx,.recur-main .list-card .swipe,.recur-main .list-card .swipe .tx{min-height:76px}
+.home-recent .recent .tx .m,.rows-card .tx .m,.sel-rows .tx .m,.recur-main .tx .m,.home-recent .recent .tx .a,.rows-card .tx .a,.sel-rows .tx .a,.recur-main .tx .a{font-size:1rem;line-height:1.5rem}
+.home-recent .recent .tx .meta,.rows-card .tx .meta,.sel-rows .tx .meta,.recur-main .tx .meta{margin-top:4px;font-size:.875rem;line-height:1.3125rem}
+.rows-card .swipe::after,.sel-rows .swipe::after{left:calc(var(--s-4) + 50px)}
+/* 분류 금액·막대 64: 이름 | 금액, 막대는 둘째 줄 전체 폭 */
+.bar-line{grid-template-columns:minmax(0,1fr) auto;gap:8px 12px;min-height:64px;padding:12px 0}
+.bar-line .bl-k{font-size:1rem;line-height:1.5rem}
+.bar-line .bl-track{grid-column:1 / -1;grid-row:2;height:8px}
+.bar-line .bl-v{flex-direction:row;align-items:baseline;gap:8px;font-size:1rem;line-height:1.5rem}
+.bar-line .bl-v small{font-size:.875rem;line-height:1.3125rem}
+.bar-line.static{cursor:default}
+.card.bars .bar-line,.home-cats .bar-line{border-radius:0}
+.bar-line .run-t{font-size:.8125rem;font-weight:500;color:var(--text-3)}
+.trend-mini .bar-line .bl-v{flex-direction:column;align-items:flex-end;gap:0}
+.card.bars{padding:4px 16px}
+.total-row{min-height:52px;margin:0;font-size:.9375rem}
+.an-title{margin:0 0 16px}
+.an-title .pt-l{display:flex;align-items:center;gap:4px}
+.an-sub{margin:0 0 16px}
+.an-sub button{font-size:.9375rem}
+.an-payer-row{border-radius:16px;background:var(--surface-1)}
+.chart-card{padding:20px}
+/* 결제자 카드: 모바일 1열, 사이 16, 안쪽 20, 금액 24/32 */
+.people{grid-template-columns:1fr;gap:16px}
+.person{padding:20px;gap:4px}
+.person-top b{font-size:1rem}
+.person-amt{font-size:1.5rem;line-height:2rem}
+.person-foot{font-size:.875rem;line-height:1.3125rem}
+.payer-h{margin:0 0 8px;font-size:1.125rem;line-height:1.625rem}
+.payer-note{margin:0 0 16px}
+@media (width >= 600px){.people{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* 내역: 합계 설명은 접지 않음, 목록 위 16 */
+.sum-line{margin:8px 2px 0;font-size:.875rem;line-height:1.3125rem}
+.rows-card{margin-top:16px}
+.rs-main{cursor:default}
+/* 달력: 셀 56(높이 auto), 행간 8, 날짜 15/22, 약식 금액 12/18. 6주도 자연 스크롤 */
+.cal .cal-g:not(.cal-w){row-gap:8px}
+.cal .cal-c{min-height:56px;height:auto;padding:6px 1px}
+.cal .cal-c .cal-d{font-size:.9375rem;line-height:1.375rem}
+.cal .cal-c .cal-a{font-size:.75rem;line-height:1.125rem}
+.cal-total{margin:8px 4px 0;font-size:.875rem}
+.sel-card{margin-top:var(--section-gap);padding:20px}
+.sel-card .sel-rows{margin-top:12px}
+.cal-sel-acts{margin:0}
+.cal-sel-t{font-size:1.125rem;line-height:1.625rem}
+.day-sum{margin:16px 0 12px;font-size:1rem}
+/* 기간 고르기: 112, 안쪽 16, 사이 12 */
+.period-opts{gap:12px;margin:16px 0 0}
+.period-opt{min-height:112px;padding:16px}
+.period-opt .po-t>small{font-size:.875rem;line-height:1.3125rem}
+.period-opt .po-a{font-size:1rem}
+.period-opt .po-a small{font-size:.8125rem}
+.pfind{margin-top:var(--section-gap)}
+.pfind .field{margin-top:0}
+.pfind .btn{margin-top:12px;width:100%}
+/* 예산: 전체 요약 20, 한도 32/40, 수정 버튼은 요약 안. 대분류 행 80(한도·쓴 돈 두 줄) */
+.bud-total{padding:20px;margin:16px 0 0}
+.bud-total .bt-lab{font-size:.875rem}
+.bud-total .bt-amt{margin:4px 0 12px;font-size:2rem;line-height:2.5rem}
+.bud-total .bt-src{margin:12px 0 0;font-size:.875rem;line-height:1.3125rem;color:var(--text-3)}
+.bud-total .bt-cta{width:100%;margin-top:16px}
+.bud-sum{margin:0 0 12px}
+.bud-cats .bud-cat{min-height:80px;padding-block:12px}
+.bud-cats .bud-cat small{display:block}
+.bud-links{margin-top:var(--section-gap)}
+/* 설정·정기 행 */
+.screen-settings .settings-row,.set-sec .settings-row,#sheet .settings-row{min-height:72px;padding-block:14px}
+.settings-row small{font-size:.875rem;line-height:1.3125rem}
+.screen-recur .rules-summary{padding:20px;margin:0}
+.screen-recur .rules-summary .rs-note{margin:8px 0 0;font-size:.875rem;line-height:1.3125rem}
+.screen-recur .rule .tx,#sheet .rule .tx{min-height:80px;padding-block:14px}
+.rule-sw{min-width:52px;min-height:44px}
+
+/* 폼: 독립 필드 사이 24, 라벨과 입력 8 */
+.field,.merchant-field,.cat-pick,.entry-meta{margin-top:24px}
+.field>label,.field>.lab,.lab{margin-bottom:8px;font-size:.875rem;line-height:1.3125rem}
+.amount-field{margin-top:16px}
+.ep-more{margin-top:var(--section-gap);padding-top:0}
+.ep-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;margin:0}
+.cat-pick.open .cat-grid .cat-cell{min-height:64px;height:auto}
+.dcat-applied{font-size:.875rem;line-height:1.3125rem}
+.pay-more{margin-top:12px}
+.lf-body .filter-section{margin-top:24px}
+.lf-body .filter-section h3{margin:0 0 12px;font-size:1rem;line-height:1.5rem}
+.mt-sec+.mt-sec{margin-top:var(--section-gap)}
+.map-sec+.map-sec{margin-top:24px}
+.import-row{padding-block:12px}
+/* 입력·주 버튼 52, 시트 제목 76, 본문 좌우 20·아래 24, 아래 버튼 12 20 20 */
+.in{min-height:52px}
+.sheet-h{min-height:76px}
+#sheet .sheet-b{padding-bottom:24px}
+.sheet-footer{padding:12px var(--page-gutter) calc(20px + var(--safe-b))}
+.kbd .sheet-footer{padding-bottom:12px}
+.notice-soft{font-size:.875rem;line-height:1.3125rem}
+/* 아래 탭 글자 13/20 */
+nav.tabs button{font-size:.8125rem}
+nav.tabs button>span:last-child{line-height:1.25rem}
+/* 넓은 화면(>840): 홈 오른쪽 칸에 기록·안내·분류를 이어서 */
+@media (width >= 840px){
+  .screen-home #view{grid-template-rows:auto}
+  .home-top{grid-row:1 / span 3}
+  .home-sec{grid-column:2;margin-top:0}
+  .home-sec+.home-sec{margin-top:var(--section-gap)}
+  .home-recent{grid-row:1}.home-info-section,.home-category-section{grid-row:2}
+}
+@media (max-width:359px){.home-hero.h25,.home-hero.h25.bill{padding:20px 16px}}
+/* 예산 대분류 행: 이름 | 한도 한 줄, 쓴 돈 둘째 줄 */
+.bud-cat>span:first-child{flex:1 1 auto}
+.bud-cat .bc-top{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;width:100%}
+.bud-cat .bc-lim{font-size:.875rem;line-height:1.3125rem;color:var(--text-2)}
+.bud-cat .bc-used{margin-top:4px}
+/* 필터 개수 배지: 아이콘 옆(겹치지 않게) */
+.lt-acts .icon-btn.has-n{width:auto;min-width:44px;padding:0 6px;display:inline-flex;align-items:center;justify-content:center;gap:2px}
+.lt-acts .icon-btn.has-n .n-badge{position:static}
+/* 파일 추가 연결(선택 8칸): 두 칸 격자로 이어서 */
+.mt-more .column-map{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,9.5rem),1fr));gap:16px 12px}
+.mt-more .column-map .map-row{margin-top:0;align-content:start}
+.an-payer{margin-top:var(--section-gap)}
+.file-line .fl-acts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:0 12px;flex:none;max-width:60%}
+.file-line .fl-acts .link{min-height:44px;font-weight:650;color:var(--brand-text)}
 </style>
 </head>
 <body>

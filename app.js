@@ -11,8 +11,19 @@ const sync = () => store.sync();
 store.on('change', () => render());
 store.on('status', () => renderStatus());
 store.on('notice', msg => toast(msg));
-// 공유 예산 충돌(v25 2차): 다른 기기가 같은 달 예산의 같은 항목을 먼저 고침 → 내 값 / 상대 값을 고르는 시트. 작성 중인 기록이 있으면 알림만
-store.on('conflict', keys => { if ($('#sheet').open && $('[data-form=entry]')) { toast('상대가 먼저 예산을 고쳤어요', '확인', () => openConflict(keys[0])); return; } openConflict(keys[0]); });
+// 공유 예산 충돌(v25 2차·3차): 다른 기기가 같은 달 예산을 먼저 고침 → 내 값은 보관하고 고르게 한다.
+// 열린 시트(기록·예산 수정·다른 설정)를 대신하지 않는다(Fable v25 P2-8): 알림 + 상태 줄 + 예산 보기 알림줄. 열린 시트가 없을 때만 바로 비교 시트
+store.on('conflict', keys => {
+  if (!$('#sheet').open) { openConflict(keys[0]); return; }
+  if ($('#sheet .bud-nav') && !$('#sheet [data-form]')) openBudget(); // 예산 보기가 열려 있으면 알림줄이 보이게 다시 그림
+  toast('상대가 먼저 예산을 고쳤어요 · 내 값은 보관했어요', '비교하기', () => openConflictSafe(keys[0]));
+});
+// 작성 중인 기록은 초안으로 남기고(stashDraft) 비교 시트를 연다. 예산 수정 중이면 그 입력을 버리지 않게 묻지 않고 알림만 남긴다
+function openConflictSafe(k) {
+  if ($('#sheet').open && $('#sheet [data-form=budget]')) { toast('예산 수정을 마치거나 취소한 뒤 상태 줄에서 골라 주세요'); return; }
+  if ($('#sheet').open && $('[data-form=entry]') && !closeSheet()) return;
+  openConflict(k);
+}
 
 /* ---------------- 유틸 ---------------- */
 const $ = s => document.querySelector(s);
@@ -565,6 +576,8 @@ const selCard = () => v25.card && cardMethods().includes(v25.card) ? v25.card : 
 const billMethods = () => selCard() ? [selCard()] : cardMethods();
 // 카드: 모든 카드가 공통 이용 기간·결제일을 쓰는 '기존 카드 묶음'. 결제수단 하나를 고르면 그 '결제수단 필터'(카드별 결제일은 다음 단계, Astra P1-02)
 const cardLabel = () => selCard() ? selCard() + ' 결제수단만' : '기존 카드 묶음';
+// 홈·기간에서도 제한 모드를 밝힌다(Astra v25 P1-02): 묶음 = 모든 카드가 공통 이용 기간·결제일, 하나를 고르면 '결제수단 필터'(카드별 결제일은 다음 단계)
+const cardScope = () => selCard() ? '결제수단 필터 · ' + selCard() : '기존 카드 묶음 · 공통 이용 기간·결제일';
 const fd = core.fullDate;
 function autoOffset() { const pd = cardPrefs().payDay; return pd ? core.billCycle(S.settings.cycle_start_day, pd, new Date()).offset : 0; }
 // 손대지 않은 카드 청구 기간은 결제일 설정이 바뀌거나 앱으로 돌아올 때 다시 '가장 가까운 결제'로
@@ -658,7 +671,7 @@ function homeView() {
     hero = `<section class="card hero home-hero h25 bill" data-ui-key="hero" aria-label="장부 기준 카드값${mj === 'all' ? '' : ', ' + mjLabel(mj) + '만'}">
       <div class="hero-top"><p class="eyebrow">${mj === 'all' ? '장부 기준 카드값' : esc(mjLabel(mj)) + ' · 청구 중 일부'}</p><span class="dday num" aria-label="${p.days < 0 ? -p.days + '일 지났어요' : p.days === 0 ? '결제일이 오늘이에요' : '결제일까지 ' + p.days + '일'}">${dd}</span></div>
       ${amt(net)}
-      <div class="hero-meta"><span class="hm-t">${mj === 'all' ? `${esc(cardLabel())} · ${list.length}건` : `${esc(cardLabel())} 전체 <span class="num">${won(allNet)}원</span>`}</span><button class="hero-link" data-act="cardpick" aria-haspopup="dialog">카드 변경</button></div>
+      <div class="hero-meta"><span class="hm-t">${mj === 'all' ? `${esc(cardScope())} · ${list.length}건` : `${esc(cardLabel())} 전체 <span class="num">${won(allNet)}원</span>`}</span><button class="hero-link" data-act="cardpick" aria-haspopup="dialog">카드 변경</button></div>
       <button class="hero-cta" data-act="stmt" aria-haspopup="dialog"><span>명세서 맞추기</span>${icon('right')}</button></section>`;
   } else {
     const cmp = core.monthCompare(moff, new Date()), c = core.compareNet(core.scopeTxs(liveTxs(), { range: null, methods: null, major: mj, map: catMap() }), cmp);
@@ -678,7 +691,7 @@ function homeView() {
   if (ht === 'info') {
     const after = !p.closed ? 0 : core.scopeTxs(liveTxs(), { range: billPeriod(0), methods: ms }).length, refunds = liveTxs().filter(t => t.refund_pending).length;
     body = `<div class="home-info" data-ui-key="home-info"><p>${fd(p.start)} ~ ${fd(p.end)} 이용분${p.pay ? ' · ' + longDate(p.pay) + ' 결제' : ''}<br><span class="muted">카드 결제수단만 더해요(현금·계좌이체 제외). 할부·취소·수수료·늦은 매입은 명세서와 다를 수 있어요.</span></p>
-      <button class="link" data-act="cardpick">${esc(cardLabel())} · 카드 바꾸기${icon('right')}</button>
+      <button class="link" data-act="cardpick">${esc(cardScope())} · 카드 바꾸기${icon('right')}</button>
       ${after && p.off === offset && offset === -1 ? `<button class="link after-close" data-act="nextbill" data-ui-key="after-close">마감 뒤 기록 ${after}건 · 다음 청구${icon('right')}</button>` : ''}
       ${refunds ? `<button class="link" data-act="refunds">환불 대기 ${refunds}건 · 전체 기간${icon('right')}</button>` : ''}</div>`;
   } else if (ht === 'cats') {
@@ -731,7 +744,7 @@ function openPeriodSheet(keep) {
   });
   const auto = month ? 0 : autoOffset();
   showSheet(`<div class="sheet-wrap">${sheetHead(month ? '달 고르기' : '청구 고르기')}
-    <div class="sheet-b"><p class="hint">${month ? '매월 1일~말일 · 모든 결제수단 순지출이에요.' : `결제일과 이용 기간을 함께 보여 드려요 · ${esc(cardLabel())} 장부 기준 카드값`}${curMajor() !== 'all' ? ' 고른 분류(' + esc(mjLabel(curMajor())) + ')는 기간을 바꿔도 그대로예요.' : ''}</p>
+    <div class="sheet-b"><p class="hint">${month ? '매월 1일~말일 · 모든 결제수단 순지출이에요.' : `결제일과 이용 기간을 함께 보여 드려요 · ${esc(cardScope())} · 장부 기준 카드값`}${curMajor() !== 'all' ? ' 고른 분류(' + esc(mjLabel(curMajor())) + ')는 기간을 바꿔도 그대로예요.' : ''}</p>
       <div class="period-opts" data-ui-key="period-opts">${items.map(x => `<button class="period-opt" data-act="ppick" data-v="${x.off}" aria-pressed="${x.off === cur}" aria-label="${esc(x.t.aria)}, ${won(x.net)}원${x.off === cur ? ', 보는 중' : ''}"><span class="po-t"><b>${esc(x.t.title)}${x.off === auto ? ` <span class="po-tag">${month ? '이번 달' : '다가오는 결제'}</span>` : ''}</b><small class="num">${month ? fd(x.p.start) + ' ~ ' + fd(x.p.end) : esc(x.t.sub)}</small><span class="po-a"><b class="num">${won(x.net)}원</b> <small>${month ? '전체 순지출' : '장부 기준 카드값'}</small></span></span><span class="po-c" aria-hidden="true">${x.off === cur ? icon('check') : ''}</span></button>`).join('')}</div>
       ${pager('ppage', pg, '', ['더 최근', '더 이전'])}
       ${pfindOpen ? `<div class="field pfind" data-ui-key="pfind"><label for="pfind-m">${month ? '보고 싶은 달' : '결제한 달'}</label><input type="month" id="pfind-m" class="in" value="${core.addMonths(today().slice(0, 7), -12)}" max="${today().slice(0, 7)}"><p class="hint">연도를 포함해 골라요. 12개월보다 오래된 기록도 볼 수 있어요.</p><button type="button" class="btn" data-act="pfindgo">이 기간 보기</button><div class="err" id="pfind-err" role="alert"></div></div>` : ''}
@@ -795,11 +808,13 @@ function anTrend() {
   }
   let periods;
   if (sub === 'period') periods = Array.from({ length: 6 }, (_, i) => { const off = curOff() - 5 + i, p = month ? monthPeriod(off) : billPeriod(off), t = periodTitle(p); return { start: p.start, end: p.end, x: month ? p.month + '월' : md(p.start), title: t.title + ' (' + fd(p.start) + ' ~ ' + fd(p.end) + ')' }; });
-  else if (sub === 'week') { const mon = addDays(anchor, -((parseDate(anchor).getDay() + 6) % 7)); periods = Array.from({ length: 8 }, (_, i) => { const s = addDays(mon, -7 * (7 - i)); return { start: s, end: addDays(s, 6), x: md(s), title: fd(s) + ' ~ ' + fd(addDays(s, 6)) }; }); }
+  // 주별 마지막 구간은 기준일(보던 기간의 끝 또는 오늘)에서 자른다: 그 뒤 날짜의 기록을 더하지 않음(Astra v25 P1-05)
+  else if (sub === 'week') { const mon = addDays(anchor, -((parseDate(anchor).getDay() + 6) % 7)); periods = Array.from({ length: 8 }, (_, i) => { const s = addDays(mon, -7 * (7 - i)), e = addDays(s, 6) > anchor ? anchor : addDays(s, 6); return { start: s, end: e, x: md(s), title: fd(s) + ' ~ ' + fd(e) }; }); }
   else periods = Array.from({ length: 14 }, (_, i) => { const d = addDays(anchor, i - 13); return { start: d, end: d, x: md(d), title: fd(d) + ' ' + WEEK[parseDate(d).getDay()] }; });
   periods.forEach(p => { p.v = netOf(pick(p)); p.run = td >= p.start && td <= p.end && p.start !== p.end; p.sel = sub === 'period' && p.start === curPeriod().start; });
-  const until = anchor === td ? '오늘' : fd(anchor);
-  return seg + barChart(periods, sub === 'period' ? (month ? '월별 순지출' : cardPrefs().payDay ? '청구별 장부 기준 카드값' : '이용 주기별 카드 기록') : sub === 'week' ? `주별 순지출 · ${until}까지 8주` : `일별 순지출 · ${until}까지 14일`);
+  const until = anchor === td ? '오늘' : fd(anchor), ad = parseDate(anchor), cut = sub === 'week' && parseDate(anchor).getDay() !== 0;
+  const lastWeek = cut ? ` · 마지막 주는 ${anchor === td ? '오늘' : (ad.getMonth() + 1) + '월 ' + ad.getDate() + '일'}까지` : '';
+  return seg + barChart(periods, sub === 'period' ? (month ? '월별 순지출' : cardPrefs().payDay ? '청구별 장부 기준 카드값' : '이용 주기별 카드 기록') : sub === 'week' ? `주별 순지출 · ${until}까지 8주${lastWeek}` : `일별 순지출 · ${until}까지 14일`);
 }
 
 /* ---------------- 결제자별 합계(내역 → 결제자, 분석 → 결제자): 정산액이 아니다 (spec 5절) ---------------- */
@@ -950,7 +965,7 @@ function openBudget(fresh) {
     foot = `<button type="button" class="btn" data-act="bedit" data-v="total">${b.total ? '전체 예산 수정' : '전체 예산 정하기'}</button>`;
   }
   const cf = Object.keys(store.conflicts());
-  const banner = cf.length ? `<button class="notice-soft warn cf-banner" data-act="cfopen" data-v="${esc(cf[0])}">${icon('alert')}<span>상대가 먼저 고친 예산 ${cf.length}건 · 내 값과 비교해 골라 주세요</span></button>` : '';
+  const banner = (cf.length ? `<button class="notice-soft warn cf-banner" data-act="cfopen" data-v="${esc(cf[0])}">${icon('alert')}<span>선택이 필요한 예산 ${cf.length}건 · 내 값과 상대 값을 비교해 골라 주세요</span></button>` : '') + budgetServerNote();
   showSheet(`<div class="sheet-wrap">${sheetHead('생활 예산')}
     <div class="sheet-b">${banner}${nav}${tabsU('btab', [['total', '전체 예산'], ['cat', '대분류 예산']], bud.tab, '예산 보기')}${body}</div>
     <div class="sheet-footer">${foot}</div></div>`, true);
@@ -967,13 +982,13 @@ function budgetEditHtml(field, err, text, scope) {
         <div class="amount-in"><input id="${total ? 'b-total' : 'b-cat'}" name="amount" data-money inputmode="numeric" autocomplete="off" placeholder="미설정" value="${esc(v)}" class="num" aria-describedby="budget-err bud-help" style="--len:${Math.max(6, v.length)}"></div>
         <p class="amount-echo num" aria-live="polite">${cur >= 10000 && text == null ? koWon(cur) : ''}</p>
         <p class="hint" id="bud-help">${total ? `대분류 배정 합계 <span class="num">${won(chk.allocated)}원</span>` : `이 달 전체 예산 <span class="num">${b.total ? won(b.total) + '원' : '미설정'}</span> · 다른 대분류 합계 <span class="num">${won(others)}원</span>`}<br>빈칸이나 0은 이 항목의 예산 제한을 해제해요.</p>
-        <p class="hint bud-ref">참고: 지난달(${parseDate(core.monthOf(core.addMonths(bud.ym, -1)).start).getMonth() + 1}월) ${name === '전체' ? '' : name + '에 '}쓴 돈 <span class="num">${won(last)}원</span></p></div>
+        ${store.serverState() !== 'new' ? '' : `<p class="hint bud-ref">참고: 지난달(${parseDate(core.monthOf(core.addMonths(bud.ym, -1)).start).getMonth() + 1}월) ${name === '전체' ? '' : name + '에 '}쓴 돈 <span class="num">${won(last)}원</span></p>`}</div>
       <fieldset class="field bud-scope"><legend class="lab">적용 범위</legend>
         <label class="radio-row"><input type="radio" name="scope" value="month" ${scope !== 'future' ? 'checked' : ''}><span>${ml}만</span></label>
         <label class="radio-row"><input type="radio" name="scope" value="future" ${scope === 'future' ? 'checked' : ''}><span>${ml}부터 이후 달에도 적용</span></label>
         <p class="hint">이전 달 예산은 바뀌지 않아요. 이후 달에 따로 정한 예산도 그대로예요.</p>
-        <p class="hint bud-future" id="bud-future">${futureBaseText(field)}</p></fieldset>
-      <div class="err" id="budget-err" role="alert">${esc(err || '')}</div>
+        ${store.serverState() !== 'new' ? '' : `<p class="hint bud-future" id="bud-future">${futureBaseText(field)}</p>`}</fieldset>
+      <div class="err" id="budget-err" role="alert">${esc(err || '')}</div>${budgetServerNote(true)}
     </div>
     <div class="sheet-footer two"><button type="button" class="btn ghost" data-act="budget">취소</button><button class="btn save" type="submit">예산 저장</button></div></form>`;
 }
@@ -986,7 +1001,18 @@ function futureBaseText(field) {
   return `이후 달에도를 고르면: ${from.year}년 ${from.month}월부터 쓰던 기본값(전체 ${b.total ? man(b.total) + '원' : '미설정'} · ${name} ${cur ? man(cur) + '원' : '미설정'})에서 ${name}만 바뀌어요. 그 달만 따로 정한 값은 바탕이 아니에요.`;
 }
 const oldMonthKeys = () => { const cut = core.addMonths(core.monthRange(0).ym, -24); return Object.keys(budgetPrefs()).filter(k => k.startsWith('bm:') && core.validYm(k.slice(3)) && k.slice(3) < cut); };
-function openBudgetEdit(field) { bud.field = field; showSheet(budgetEditHtml(field), true); const a = $('#sheet [name=amount]'); if (a) a.focus({ preventScroll: true }); }
+/* 월 예산 저장 계약(v25 3차, Astra P0-02): 수정 번호를 비교하는 서버(features prefsRev)에서만 저장한다.
+ * 옛 서버 = 보기만, 수정 화면은 열리지만 저장하면 '서버 업데이트가 필요해요'와 함께 입력을 그대로 둔다. 서버 응답 전(오프라인 첫 실행) = '확인 중'.
+ * 편집을 시작할 때의 예산 값(수정 번호 포함)을 기준으로 고정해, 고치는 사이 상대 수정이 들어와도 내 저장과 비교한다 */
+function budgetServerNote(inEdit) {
+  const st = store.serverState(); if (st === 'new') return '';
+  if (st === 'unknown') return `<p class="notice-soft warn srv-budget">서버를 확인하는 중이에요. 연결되면 월 예산을 저장할 수 있어요${inEdit ? ' · 입력은 그대로 둬요' : ''}.</p>`;
+  return `<div class="notice-soft warn srv-budget"><p>${inEdit ? '서버 업데이트 전이라 이 화면에서 저장할 수 없어요 · 입력은 그대로 둬요' : '공유 예산을 저장하려면 서버 업데이트가 필요해요. 지금은 보기만 할 수 있어요'}.</p>${srvGuide()}</div>`;
+}
+// 서버 업데이트 방법(시트 주인이 한 번): 이 화면을 떠나지 않게 접어 둔다
+const srvGuide = () => `<details class="srv-guide"><summary>서버 업데이트 방법</summary><ol><li>구글 시트 → 확장 프로그램 → Apps Script</li><li>새 Code.gs 전체를 붙여넣고 저장</li><li>배포 → 배포 관리 → 기존 배포 편집 → 새 버전 → 배포(주소는 그대로)</li></ol><p>앱을 다시 열면 바로 쓸 수 있어요. 기록은 업데이트해도 그대로예요.</p></details>`;
+function budgetSnap() { const p = budgetPrefs(), o = {}; Object.keys(p).forEach(k => { if (/^b[mt]:\d{4}-\d{2}$/.test(k)) o[k] = JSON.parse(JSON.stringify(p[k])); }); return o; }
+function openBudgetEdit(field) { bud.field = field; bud.snap = budgetSnap(); showSheet(budgetEditHtml(field), true); const a = $('#sheet [name=amount]'); if (a) a.focus({ preventScroll: true }); }
 function saveBudget(f) {
   const fd2 = new FormData(f), text = String(fd2.get('amount') || ''), scope = fd2.get('scope') === 'future' ? 'future' : 'month';
   const r = core.parseBudgetWon(text), field = bud.field;
@@ -998,14 +1024,18 @@ function saveBudget(f) {
     return fail(res.check ? `${where}대분류 합계가 전체 예산보다 ${won(res.check.short)}원 커요. 전체 예산을 늘리거나 분류 금액을 줄여 주세요` : '저장할 수 없는 항목이에요');
   }
   const patch = Object.assign({}, res.patch); if ((store.prefs() || {}).budget_basis !== 'month') patch.budget_basis = 'month';
-  if (!store.setPrefs(patch)) return fail('저장하지 못했어요. 입력은 그대로 두었어요');
+  const ss = store.serverState();
+  if (ss !== 'new') return fail(ss === 'old' ? '공유 예산을 저장하려면 서버 업데이트가 필요해요' : '서버를 확인하는 중이에요. 연결된 뒤 다시 저장해 주세요');
+  // 기준 = 편집을 시작할 때 본 값(그 사이 상대 수정이 들어왔으면 보낼 때 내 값·상대 값·처음 값을 비교)
+  const snap = bud.snap || {}, base = {}; Object.keys(patch).forEach(k => { if (/^b[mt]:/.test(k)) base[k] = k in snap ? snap[k] : null; });
+  if (!store.setPrefs(patch, { base })) return fail('저장하지 못했어요. 입력은 그대로 두었어요');
   bud.tab = field === 'total' ? 'total' : 'cat'; openBudget(); savedToast('예산을 저장했어요');
 }
 // 처음 한 번: 기존 주기 예산을 조용히 월 예산으로 바꾸지 않는다(spec 6.2). 비교를 보여 주고 고르게 한다
 function budgetChooseHtml(bs) {
   const lp = core.legacyProposal(bs.legacy, catMap()), c = cycleRange(0), now = core.monthRange(0);
   return `<div class="sheet-wrap">${sheetHead('생활 예산')}
-    <div class="sheet-b"><p class="lead-hint">예산 기준을 달력 월(1일~말일)로 바꿀 수 있어요. 어떻게 할까요?</p>
+    <div class="sheet-b"><p class="lead-hint">예산 기준을 달력 월(1일~말일)로 바꿀 수 있어요. 어떻게 할까요?</p>${budgetServerNote()}
       <section class="card bud-opt"><b>기존 주기 예산 유지</b><small class="num">매월 ${S.settings.cycle_start_day}일 ~ 다음 달 ${S.settings.cycle_start_day - 1 || '말'}일 · 지금 ${md(c.start)} ~ ${md(c.end)}</small><p class="num">${lp.total ? won(lp.total) + '원' : '전체 미설정'} · 분류 ${Object.keys(bs.legacy.cats || {}).length}개</p></section>
       <section class="card bud-opt"><b>월 예산 시작 (제안)</b><small class="num">${now.year}년 ${now.month}월부터 · 1일~말일 · 대분류 8개</small>
         <p class="num">${lp.total ? won(lp.total) + '원' : '전체 미설정'}${Object.keys(lp.cats).length ? ' · ' + Object.entries(lp.cats).slice(0, 3).map(([id, n]) => core.majorLabel(id) + ' ' + man(n)).join(' · ') + (Object.keys(lp.cats).length > 3 ? ' 외' : '') : ''}</p>
@@ -1025,6 +1055,7 @@ function budgetLegacyHtml(bs, archived) {
     <div class="sheet-footer${archived ? '' : ' two'}">${archived ? '<button type="button" class="btn" data-act="budget">월 예산으로 돌아가기</button>' : '<button type="button" class="btn ghost" data-act="blegacyedit">기존 예산 수정</button><button type="button" class="btn" data-act="bmonthstart">월 예산 시작</button>'}</div></div>`;
 }
 function startMonthBudget() {
+  if (store.serverState() !== 'new') { toast(store.serverState() === 'old' ? '월 예산은 서버 업데이트 뒤에 시작할 수 있어요 · 설정 → 앱·연결' : '서버를 확인하는 중이에요. 연결된 뒤 다시 눌러 주세요'); return; }
   const bs = budgetState(), lp = bs.legacy ? core.legacyProposal(bs.legacy, catMap()) : { total: 0, cats: {}, over: false }, ym = core.monthRange(0).ym;
   const patch = { budget_basis: 'month' };
   if (!core.hasMonthBudget(bs.p) && (lp.total || Object.keys(lp.cats).length)) patch['bt:' + ym] = { total: lp.total, cats: lp.over ? {} : lp.cats, rev: 1, by: S.me || '', at: Date.now(), origin: 'legacy' };
@@ -1053,34 +1084,66 @@ function saveLegacyBudget(f) {
 
 /* ---------------- 예산 충돌: 상대가 먼저 고쳤어요 (spec 6.3, Astra P0-02) ----------------
  * 내 값은 충돌 기록(store.conflicts)에 그대로 남아 있다(초안 보존). 항목마다 내 값/상대 값을 고르면 상대 값을 기준으로 다시 저장 */
-const fieldName = f => f === 'total' ? '전체 예산' : f.startsWith('cats.') ? core.majorLabel(f.slice(5)) + ' 예산' : f;
-const fieldVal = (v, f) => { if (!v) return 0; if (f === 'total') return Number(v.total) || 0; return Number((v.cats || {})[f.slice(5)]) || 0; };
-function openConflict(key) {
-  const c = store.conflicts()[key]; if (!c) { const k = Object.keys(store.conflicts())[0]; if (k) return openConflict(k); return; }
+// 항목마다 '내가 고친 값'과 '상대가 바꾼 값' 중 하나를 직접 고른다(기본 선택 없음). 고치기 전 값도 함께. 여러 항목이면 2개/쪽(Astra v25 P0-02)
+let cfState = { key: '', page: 0, picks: {} };
+const cfAmt = n => n ? won(n) + '원' : '미설정';
+function openConflict(key, keep) {
+  const all = store.conflicts();
+  const c = all[key]; if (!c) { const k = Object.keys(all)[0]; if (k) return openConflict(k); if ($('#sheet [data-conflict]')) $('#sheet').close(); return; }
+  if (!keep || cfState.key !== key) cfState = { key, page: 0, picks: {} };
   const ym = key.slice(3), r = core.monthOf(ym), what = key.startsWith('bt:') ? `${r.year}년 ${r.month}월부터 이후 기본값` : `${r.year}년 ${r.month}월 예산`;
-  const auto = store.merge3(c.base, c.mine, c.theirs).value, others = Object.keys(store.conflicts()).length - 1;
+  const others = Object.keys(all).length - 1, who = c.theirs && c.theirs.by ? '(' + esc(c.theirs.by) + ')' : '';
+  const merged = store.merge3(c.base, c.mine, c.theirs).value, sum = Object.values(merged.cats || {}).reduce((a, n) => a + (Number(n) || 0), 0);
+  const lead = c.reason === 'over'
+    ? `<p class="hint cf-lead">${esc(what)}의 다른 항목을 다른 기기에서 먼저 바꿨어요${who}. 두 사람 것을 합치면 대분류 합계 <b class="num">${won(sum)}원</b> / 전체 <b class="num">${cfAmt(Number(merged.total) || 0)}</b> · <b class="num">${won(c.over || Math.max(0, sum - (Number(merged.total) || 0)))}원 초과</b>라 자동으로 합치지 않았어요. 항목마다 하나를 골라 주세요.</p>`
+    : `<p class="hint cf-lead">${esc(what)}의 같은 항목을 다른 기기에서 먼저 바꿨어요${who}. 항목마다 하나를 골라 주세요. 다른 항목은 두 사람 것을 합쳤어요.</p>`;
+  const pg = core.pageOf(c.fields.length, cfState.page, 2); cfState.page = pg.page;
+  const done = c.fields.filter(f => cfState.picks[f]).length;
   showSheet(`<div class="sheet-wrap" data-conflict="${esc(key)}">${sheetHead('상대가 먼저 고쳤어요')}
-    <div class="sheet-b"><p class="hint">${esc(what)}을 다른 기기에서 먼저 바꿨어요${c.theirs && c.theirs.by ? '(' + esc(c.theirs.by) + ')' : ''}. 같은 항목만 골라 주세요. 다른 항목은 두 사람 것을 합쳤어요. 내 입력은 고를 때까지 이 기기에 남아 있어요.</p>
-      ${c.fields.map((f, i) => `<fieldset class="card cf-row"><legend class="lab">${esc(fieldName(f))}</legend>
-        <label class="radio-row"><input type="radio" name="cf${i}" value="mine" checked><span>내 값 <b class="num">${fieldVal(c.mine, f) ? won(fieldVal(c.mine, f)) + '원' : '미설정'}</b></span></label>
-        <label class="radio-row"><input type="radio" name="cf${i}" value="theirs"><span>상대가 바꾼 값 <b class="num">${fieldVal(c.theirs, f) ? won(fieldVal(c.theirs, f)) + '원' : '미설정'}</b></span></label></fieldset>`).join('')}
-      <div class="err" id="cf-err" role="alert"></div>${others ? `<p class="hint">확인할 충돌이 ${others}건 더 있어요.</p>` : ''}</div>
+    <div class="sheet-b">${lead}
+      ${c.fields.slice(pg.from, pg.to).map(f => `<fieldset class="card cf-row"><legend class="lab">${esc(fieldName(f))} <span class="h2sub num">고치기 전 ${cfAmt(fieldVal(c.base, f))}</span></legend>
+        <label class="radio-row"><input type="radio" name="cf:${esc(f)}" value="mine" data-act="cfpick" data-v="${esc(f)}|mine" ${cfState.picks[f] === 'mine' ? 'checked' : ''}><span>내가 고친 값 <b class="num">${cfAmt(fieldVal(c.mine, f))}</b></span></label>
+        <label class="radio-row"><input type="radio" name="cf:${esc(f)}" value="theirs" data-act="cfpick" data-v="${esc(f)}|theirs" ${cfState.picks[f] === 'theirs' ? 'checked' : ''}><span>상대가 바꾼 값 <b class="num">${cfAmt(fieldVal(c.theirs, f))}</b></span></label></fieldset>`).join('')}
+      ${pager('cfpage', pg, '개')}
+      <p class="hint cf-progress" id="cf-progress">고른 항목 <span class="num">${done}/${c.fields.length}</span>${others ? ` · 확인할 예산 ${others}건 더 있어요` : ''} · 내 입력은 고를 때까지 이 기기에 남아요</p>
+      <div class="err" id="cf-err" role="alert"></div></div>
     <div class="sheet-footer two"><button type="button" class="btn ghost" data-act="cfkeep">상대 값 그대로</button><button type="button" class="btn" data-act="cfsave">고른 값으로 저장</button></div></div>`, true);
 }
+const fieldName = f => f === 'total' ? '전체 예산' : f.startsWith('cats.') ? core.majorLabel(f.slice(5)) + ' 예산' : f;
+const fieldVal = (v, f) => { if (!v) return 0; if (f === 'total') return Number(v.total) || 0; return Number((v.cats || {})[f.slice(5)]) || 0; };
 function saveConflict(keepTheirs) {
-  const key = ($('#sheet [data-conflict]') || {}).dataset ? $('#sheet [data-conflict]').dataset.conflict : ''; const c = store.conflicts()[key]; if (!c) return;
-  if (keepTheirs) { store.resolveConflict(key); }
+  const el = $('#sheet [data-conflict]'), key = el ? el.dataset.conflict : ''; const c = store.conflicts()[key]; if (!c) return;
+  const err = m => { const e = $('#cf-err'); if (e) e.textContent = m; };
+  if (keepTheirs) { if (!store.resolveConflict(key)) return err('기기에 저장하지 못했어요. 내 값은 그대로 남아 있어요'); }
   else {
+    const left = c.fields.filter(f => !cfState.picks[f]);
+    if (left.length) { const i = c.fields.indexOf(left[0]); if (Math.floor(i / 2) !== cfState.page) { cfState.page = Math.floor(i / 2); openConflict(key, true); } return err(`아직 고르지 않은 항목이 ${left.length}개 있어요: ${left.map(fieldName).join(', ')}`); }
     const v = JSON.parse(JSON.stringify(store.merge3(c.base, c.mine, c.theirs).value)); v.cats = v.cats || {};
-    c.fields.forEach((f, i) => { const pickMine = ($(`#sheet [name=cf${i}]:checked`) || {}).value !== 'theirs', src = pickMine ? c.mine : c.theirs, n = fieldVal(src, f);
+    c.fields.forEach(f => { const n = fieldVal(cfState.picks[f] === 'mine' ? c.mine : c.theirs, f);
       if (f === 'total') v.total = n; else if (n) v.cats[f.slice(5)] = n; else delete v.cats[f.slice(5)]; });
     const chk = core.budgetCheck({ total: Number(v.total) || 0, cats: v.cats });
-    if (!chk.ok) { $('#cf-err').textContent = `고른 값으로는 대분류 합계가 전체 예산보다 ${won(chk.short)}원 커요. 다른 쪽을 골라 주세요`; return; }
+    if (!chk.ok) return err(`고른 값으로는 대분류 합계 ${won(chk.allocated)}원 / 전체 ${won(Number(v.total) || 0)}원 · ${won(chk.short)}원 초과예요. 다른 쪽을 골라 주세요`);
     v.by = S.me || ''; v.at = Date.now();
-    if (!store.resolveConflict(key, v)) { $('#cf-err').textContent = '저장하지 못했어요. 다시 눌러 주세요'; return; }
+    if (!store.resolveConflict(key, v)) return err('저장하지 못했어요. 내 값은 그대로 남아 있어요');
   }
+  cfState = { key: '', page: 0, picks: {} };
   const next = Object.keys(store.conflicts())[0];
   if (next) openConflict(next); else { $('#sheet').close(); savedToast(keepTheirs ? '상대 값을 그대로 뒀어요' : '고른 값으로 저장했어요'); }
+}
+// 연결 해제 전 고르지 않은 예산(Astra v25 P0-03): 해제를 막고 비교로 안내. 버리기는 대상·금액을 보여 주고 따로 확인
+function openDisconnectGuard() {
+  const all = store.conflicts(), ks = Object.keys(all);
+  const line = k => { const c = all[k], r = core.monthOf(k.slice(3)); return `${r.year}년 ${r.month}월${k.startsWith('bt:') ? '부터' : ''} · ${c.fields.map(f => fieldName(f) + ' ' + cfAmt(fieldVal(c.mine, f))).join(', ')}`; };
+  showSheet(`<div class="sheet-wrap">${sheetHead('고르지 않은 예산이 있어요')}
+    <div class="sheet-b"><p class="hint">연결을 해제하면 이 기기에만 있는 내 예산 입력이 사라져요. 먼저 비교해 골라 주세요.</p>
+      <div class="card list-card">${ks.map(k => `<button class="settings-row" data-act="cfopen" data-v="${esc(k)}"><span><b>내가 고친 값</b><small class="num">${esc(line(k))}</small></span>${icon('right')}</button>`).join('')}</div></div>
+    <div class="sheet-footer two"><button type="button" class="btn ghost danger-t" data-act="discdrop">내 값 버리고 해제</button><button type="button" class="btn" data-act="cfopen">비교하고 고르기</button></div></div>`, true);
+}
+function dropAndDisconnect() {
+  const all = store.conflicts(), ks = Object.keys(all);
+  const what = ks.map(k => { const c = all[k], r = core.monthOf(k.slice(3)); return `${r.month}월 ` + c.fields.map(f => fieldName(f) + ' ' + cfAmt(fieldVal(c.mine, f))).join(', '); }).join(' / ');
+  if (!confirm(`내가 고친 예산(${what})을 버리고 연결을 해제할까요? 되돌릴 수 없어요.`)) return;
+  if (store.disconnect({ discardConflicts: true })) { $('#sheet').close(); } else toast('공유 대기 중인 기록·설정이 있어요. 먼저 공유해 주세요');
 }
 
 /* ---------------- 대분류 연결 (spec 7.2): 확인 필요 / 연결됨, 4개/쪽, 새 기록만 / 과거 N건도 ---------------- */
@@ -1125,7 +1188,7 @@ function syncSummary() {
   // '오늘'은 실제 오늘에만, 다른 날은 'M월 D일'(Astra P1-11·Fable P2-5). 오프라인을 공유 중보다 먼저 본다
   const ls = st.lastSync ? new Date(st.lastSync) : null, tm = ls ? ls.toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' }) : '';
   const when = ls ? (ymd(ls) === today() ? '오늘 ' : (ls.getFullYear() !== new Date().getFullYear() ? ls.getFullYear() + '년 ' : '') + (ls.getMonth() + 1) + '월 ' + ls.getDate() + '일 ') + tm : '';
-  const txt = off ? `오프라인 · 공유 대기 ${n.total}건` : st.syncing ? `공유 중 · 남은 ${n.total}건` : st.error ? `공유하지 못했어요 · 대기 ${n.total}건` : n.total ? `이 기기에 저장 · 공유 대기 ${n.total}건` : n.conflicts ? `예산 충돌 ${n.conflicts}건 · 눌러서 고르기` : when ? `공유 완료 · ${when}` : '아직 공유 기록이 없어요';
+  const txt = off ? `오프라인 · 공유 대기 ${n.total}건` : st.syncing ? `공유 중 · 남은 ${n.total}건` : st.error ? `공유하지 못했어요 · 대기 ${n.total}건` : n.total ? `이 기기에 저장 · 공유 대기 ${n.total}건${n.conflicts ? ` · 예산 선택 ${n.conflicts}건` : ''}` : n.conflicts ? `전송 대기 0건 · 선택이 필요한 예산 ${n.conflicts}건` : when ? `공유 완료 · ${when}` : '아직 공유 기록이 없어요';
   return { n, st, off, when, txt, warn: off || !!st.error || n.total > 0 || n.conflicts > 0, err: !!st.error && !off };
 }
 function persistText() {
@@ -1144,12 +1207,13 @@ function openDisplaySheet() {
   showSheet(`<div class="sheet-wrap">${sheetHead('화면·입력')}
     <div class="sheet-b"><span class="lab">화면 모드 <span class="h2sub">이 기기에만</span></span>
       <div class="seg seg3 theme-seg" role="group" aria-label="화면 모드" data-ui-key="theme">${[['system', '기기 설정', 'gear'], ['light', '라이트', 'sun'], ['dark', '다크', 'moon']].map(([k, l, ic]) => `<button data-act="theme" data-v="${k}" aria-pressed="${theme === k}">${icon(ic)}<span>${l}</span></button>`).join('')}</div>
-      <label class="toggle kp-toggle" for="kp-on"><span>금액은 화면 숫자 키패드로 입력<small>끄면 휴대폰 숫자 키보드(기본)</small></span><input type="checkbox" id="kp-on" data-act="kptoggle" ${useKeypad() ? 'checked' : ''}></label></div></div>`, true);
+      <label class="toggle kp-toggle" for="kp-on"><span>기록 금액 입력 방식: 화면 숫자 키패드<small>끄면 휴대폰 숫자 키보드 · 기록 화면의 금액 칸에만 적용 · 기록 화면에서도 바꿀 수 있어요</small></span><input type="checkbox" id="kp-on" data-act="kptoggle" ${useKeypad() ? 'checked' : ''}></label></div></div>`, true);
 }
 function openSyncSheet() {
   const s = syncSummary(), next = s.st.retryAt ? new Date(s.st.retryAt).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit', second: '2-digit' }) : '';
   showSheet(`<div class="sheet-wrap">${sheetHead('공유 상태')}
-    <div class="sheet-b"><div class="notice-soft${s.warn ? ' warn' : ''}" data-ui-key="sync-box"><b>${esc(s.txt)}</b><p>${s.n.total ? `기록 ${s.n.tx}건${s.n.settings ? ' + 설정 변경 ' + s.n.settings + '건' : ''} · 이 기기에 안전하게 저장돼 있어요. 아직 상대방에게는 보이지 않아요.` : '대기 중인 기록·설정이 없어요.'}</p>
+    <div class="sheet-b"><div class="notice-soft${s.warn ? ' warn' : ''}" data-ui-key="sync-box"><b>${esc(s.txt)}</b><p>${s.n.total ? `기록 ${s.n.tx}건${s.n.settings ? ' + 설정 변경 ' + s.n.settings + '건' : ''} · 이 기기에 안전하게 저장돼 있어요. 아직 상대방에게는 보이지 않아요.` : '보낼 기록·설정이 없어요(전송 대기 0건).'}</p>
+      ${s.n.conflicts ? `<button class="link cf-link" data-act="cfopen">선택이 필요한 예산 ${s.n.conflicts}건 · 내 값과 상대 값 비교${icon('right')}</button>` : ''}
       ${s.st.error ? `<p class="err-t">${esc(s.st.error)}</p>` : ''}${next && s.n.total ? `<p>자동으로 다시 보내요 · 다음 ${next}${s.st.retryN > 1 ? ` (${s.st.retryN}번째)` : ''}</p>` : ''}</div>
       <p class="hint">마지막 공유 ${s.when || '없음'}. 앱이 열려 있는 동안 실패하면 30초 → 1분 → 2분 … 간격으로 다시 보내요.</p>
       <p class="hint"><b>기기 저장 보호</b> · ${esc(persistText())}</p></div>
@@ -1223,10 +1287,10 @@ function txRow(t, noDate) {
   const d = parseDate(t.date);
   const name = t.merchant || t.category || '기록한 지출';
   const said = t.type === 'refund' ? `환불 ${won(t.amount)}원, 순지출에서 빠져요` : t.type === 'transfer' ? `지출 제외 ${won(t.amount)}원` : `지출 ${won(t.amount)}원`;
-  return `<div class="swipe" data-id="${esc(t.id)}"><button class="swipe-del" data-act="askdel" data-v="${esc(t.id)}" tabindex="-1" aria-label="${esc(name)} 삭제">삭제</button><button class="tx${cls ? ' is-' + cls : ''}" data-act="edit" data-v="${esc(t.id)}" aria-label="${esc(name)}, ${said}, ${d.getMonth() + 1}월 ${d.getDate()}일 ${esc(t.category || '미분류')} ${esc(t.payer || '공동')} 결제${t.method ? ' ' + esc(t.method) : ''}${t.refund_pending ? ', 환불 대기' : ''}. 눌러서 고치기">
+  return `<div class="swipe" data-id="${esc(t.id)}"><button class="swipe-del" data-act="askdel" data-v="${esc(t.id)}" tabindex="-1" aria-label="${esc(name)} 삭제">삭제</button><button class="tx${cls ? ' is-' + cls : ''}" data-act="edit" data-v="${esc(t.id)}" aria-label="${esc(name)}, ${said}, ${d.getMonth() + 1}월 ${d.getDate()}일 ${esc(t.category || '미분류')} ${esc(t.payer || '결제자 미지정')}${t.payer ? ' 결제' : ''}${t.method ? ' ' + esc(t.method) : ''}${t.refund_pending ? ', 환불 대기' : ''}. 눌러서 고치기">
     <span class="ic" aria-hidden="true">${categoryIcon(t.category)}</span>
     <span class="mid"><span class="m">${esc(t.merchant || t.category || '기록한 지출')}</span>
-      <span class="meta">${noDate ? '' : `${d.getMonth() + 1}.${d.getDate()} · `}${esc(t.category || '미분류')} · ${esc(t.payer || '공동')}${t.method ? ' · ' + esc(t.method) : ''}
+      <span class="meta">${noDate ? '' : `${d.getMonth() + 1}.${d.getDate()} · `}${esc(t.category || '미분류')} · ${esc(t.payer || '미지정')}${t.method ? ' · ' + esc(t.method) : ''}
       ${t.refund_pending ? '<span class="tag">환불 대기</span>' : ''}${t.type === 'transfer' ? '<span class="tag q">지출 제외</span>' : ''}${t.created_by === '정기' ? '<span class="tag q">정기</span>' : ''}${store.isPending(t.id) ? '<span class="tag q">공유 대기</span>' : ''}</span></span>
     <span class="a num ${cls}">${t.type === 'refund' ? '<span class="a-kind">환불</span> +' : ''}${wonWbr(t.amount)}</span></button></div>`;
 }
@@ -1375,7 +1439,7 @@ function settingsView() {
       <button class="settings-row" data-act="appsheet"><span><b>앱 업데이트·홈 화면에 추가</b><small id="ver">${esc(verText())}</small></span>${icon('right')}</button>
       <button class="settings-row" data-act="displaysheet"><span><b>화면·입력</b><small>${{ system: '기기 설정', light: '라이트', dark: '다크' }[theme]} · 숫자 입력 ${useKeypad() ? '화면 키패드' : '휴대폰 키보드'}</small></span>${icon('right')}</button>
       ${row('setcode', '설정 코드 바꾸기', '이 기기의 기록과 공유 대기 건은 그대로 남아요')}
-      <button class="settings-row danger-row" data-act="disconnect"><span><b>이 기기 연결 해제</b><small>공유 대기 중인 기록·설정이 있으면 먼저 공유돼야 해요</small></span></button></div>`;
+      <button class="settings-row danger-row" data-act="disconnect"><span><b>이 기기 연결 해제</b><small>공유 대기 중인 기록·설정이나 고르지 않은 예산이 있으면 먼저 정리해요</small></span></button></div>`;
   else body = `<div class="card list-card" data-ui-key="set-book">
       ${row('budget', '예산 보기·수정', bs.basis === 'month' ? `매월 1일~말일 · 대분류 8개` : bs.basis === 'choose' ? '기존 주기 예산 · 월 예산으로 바꿀 수 있어요' : `기존 주기 예산 · 매월 ${st.cycle_start_day}일 시작`, '', bs.basis === 'month' && bm.total ? man(bm.total) + '원' : '')}
       ${row('setpay', '카드 결제일·결제수단', store.prefs() ? cp.payDay ? `다음 ${longDate(pay)} · ${esc(cardLabel())}` : '정하면 결제일과 남은 날이 보여요' : '서버 업데이트가 필요해요', '', cp.payDay ? `매월 ${cp.payDay}일` : '')}
@@ -1518,9 +1582,11 @@ function ruleHtml() {
         <div class="amount-in"><input id="r-amount" name="amount" inputmode="numeric" autocomplete="off" placeholder="0" value="${esc(d.amountText != null ? d.amountText : d.amount ? won(d.amount) : '')}" class="num" style="--len:${Math.max(6, d.amount ? won(d.amount).length : 0)}"${d.amountErr && d.amountErr !== 'empty' ? ' data-raw="1"' : ''}><span>원</span></div>
         <p class="amount-echo num" aria-live="polite">${d.amount >= 10000 ? koWon(d.amount) : ''}</p>
         <div class="err" id="rule-err" role="alert"></div></div>
-      <div class="field"><label for="r-cat">분류</label><input id="r-cat" name="category" class="in" list="r-cats" autocomplete="off" placeholder="예: 대출, 통신비, 보험" value="${esc(d.category)}">
+      <div class="field"><label for="r-cat">${hasMajorCol() ? '세부 분류' : '분류'}</label><input id="r-cat" name="category" class="in" list="r-cats" autocomplete="off" placeholder="예: 대출, 통신비, 보험" value="${esc(d.category)}">
         <datalist id="r-cats">${[...new Set(['대출', '통신비', '보험', '구독', ...st.categories])].map(c => `<option value="${esc(c)}">`).join('')}</datalist>
         <p class="hint">새 분류를 적으면 분류 목록에도 추가돼요.</p></div>
+      ${hasMajorCol() ? `<div class="field"><label for="r-major">대분류</label><select id="r-major" name="major" class="in"><option value="">세부 분류의 연결을 따름</option>${core.MAJORS.map(m => `<option value="${m.id}" ${d.major === m.id ? 'selected' : ''}>${m.label}</option>`).join('')}</select>
+        <p class="hint">이 규칙으로 만드는 기록의 대분류예요. 이미 만든 기록은 그대로예요.</p></div>` : ''}
       <div class="field"><span class="lab">반복</span><div class="seg seg2">${[['month', '매월'], ['week', '매주']].map(([k, l]) => `<button type="button" data-act="rfreq" data-v="${k}" aria-pressed="${d.freq === k}">${l}</button>`).join('')}</div></div>
       <div class="field"><label for="r-day">${d.freq === 'week' ? '요일' : '날짜'}</label><select id="r-day" name="day" class="in">${days.map(([v, l]) => `<option value="${v}" ${Number(d.day) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
         ${d.freq === 'month' ? '<p class="hint">29~31일은 그날이 없는 달엔 말일에 기록돼요.</p>' : ''}</div>
@@ -1545,6 +1611,7 @@ function readRule(f) {
   d.name = String(fd.get('name') || '').trim();
   const ar = core.parseWon(fd.get('amount')); d.amount = ar.ok ? ar.value : 0; d.amountErr = ar.ok ? '' : ar.error; d.amountText = String(fd.get('amount') || '');
   d.category = String(fd.get('category') || '').trim();
+  if (fd.has('major')) d.major = core.MAJOR_IDS.includes(fd.get('major')) ? fd.get('major') : ''; // 서버가 옛 버전이면 칸이 없고 값도 그대로
   d.day = Number(fd.get('day')); d.payer = fd.get('payer'); d.method = fd.get('method');
   d.start = fd.get('start') || today(); d.end = fd.get('end') || '';
 }
@@ -1649,13 +1716,26 @@ function openEntry(id, ctx) {
 // 상세 = 세부 분류(기존 분류 이름) · 종류 · 환불 예정 · 메모 · 즐겨찾기. 두 칸 모두 한 폼 안이라 탭을 오가도 초안이 그대로다.
 // 대분류(draft.major, 시트 major 열)와 세부 분류(draft.category)는 따로 저장한다(Astra P0-01). 대분류를 안 고르면 세부 분류의 연결로 집계.
 // 서버가 옛 버전(major 열 없음)이면 대분류 칸이 분류 칸에 대분류 이름을 적는 v25 1차 방식으로 동작하고 '서버 업데이트 필요'를 알린다.
-// 화면 숫자 키패드는 설정 → 앱·연결 → 화면·입력에서 켤 때만(기본은 OS 숫자 키보드). 켜면 키도 직접 입력과 같은 금액 경로(moneyInput)
+// 기록 금액 입력 방식(v25 3차, Mason 결정): 이전 버전을 쓰던 기기는 화면 숫자 키패드 그대로, 새 설치는 휴대폰 숫자 키보드(store loadState가 처음 한 번 정함).
+// 기록 화면의 '휴대폰 키보드로/화면 키패드로'와 설정 → 앱·연결 → 화면·입력에서 바꾸고 기기별로 기억. 범위는 기록 화면의 금액 칸만(예산·명세서·정기는 휴대폰 키보드)
+// 키패드 키도 직접 입력과 같은 금액 경로(moneyInput)
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0', 'back'];
 let entryStage = 'basic';
 const MAJOR_NAMES = core.MAJORS.map(m => m.label);
 const detailCats = () => S.settings.categories.filter(c => !MAJOR_NAMES.includes(c));
 const hasMajorCol = () => store.features().includes('major');
 const useKeypad = () => S.keypad === true;
+const keypadHtml = () => `<div class="keypad" id="keypad" role="group" aria-label="금액 숫자 키패드">${KEYS.map(k => `<button type="button" class="kp" data-act="key" data-v="${k}" aria-label="${k === 'back' ? '한 자리 지우기' : k === '00' ? '0 두 개' : k}">${k === 'back' ? icon('backspace') : k}</button>`).join('')}</div>`;
+const kpModeBtn = kp => `<button type="button" class="kp-mode" data-act="kpmode" aria-label="기록 금액 입력 방식: 지금 ${kp ? '화면 키패드' : '휴대폰 키보드'}. ${kp ? '휴대폰 키보드' : '화면 키패드'}로 바꾸기, 이 기기에 기억">${kp ? '휴대폰 키보드로' : '화면 키패드로'}</button>`;
+// 기록 화면에서 입력 방식을 바꾼다: 다시 그리지 않고 키패드만 넣고 빼서 작성 중인 값·선택을 그대로 둔다
+function setEntryKeypad(on) {
+  const f = $('[data-form=entry]'), a = $('#amount'); if (!f || !a) return;
+  f.classList.toggle('with-kp', on); f.classList.remove('kp-off');
+  a.setAttribute('inputmode', on ? 'none' : 'numeric');
+  const kpEl = $('#keypad'); if (on && !kpEl) f.querySelector('.amount-field').insertAdjacentHTML('afterend', keypadHtml()); if (!on && kpEl) kpEl.remove();
+  const mb = f.querySelector('.kp-mode'); if (mb) mb.outerHTML = kpModeBtn(on);
+  a.blur(); a.focus({ preventScroll: true }); // 키보드 종류를 바로 바꿈
+}
 // 지금 초안의 대분류 이름(정하지 않았으면 ''), 그리고 그것이 건별 선택인지(세부 분류 연결로 정해진 것인지)
 const entryMajor = () => draft && (draft.major || draft.category) ? core.majorLabel(core.majorOf(Object.assign({ created_at: Date.now() }, draft), catMap()).id) : '';
 const entryMajorExplicit = () => !!(draft && (core.MAJOR_IDS.includes(draft.major) || MAJOR_NAMES.includes(draft.category)));
@@ -1674,28 +1754,29 @@ function entryHtml(isEdit) {
       <div class="seg seg2 entry-seg" role="group" aria-label="입력 단계"><button type="button" data-act="estage" data-v="basic" aria-pressed="${stage === 'basic'}">기본</button><button type="button" data-act="estage" data-v="more" aria-pressed="${stage === 'more'}">상세<span class="es-sum" id="es-sum">${esc(moreSummary())}</span></button></div>
       <div class="ep ep-basic">
       <div class="field amount-field">
-        <div class="amount-card" data-act="kpshow"><label for="amount">얼마를 썼나요?</label>
+        <div class="amount-card" data-act="kpshow"><div class="amount-lab"><label for="amount">얼마를 썼나요?</label>${kpModeBtn(kp)}</div>
         <div class="amount-in"><input id="amount" name="amount" inputmode="${kp ? 'none' : 'numeric'}" enterkeyhint="next" autocomplete="off" placeholder="0" value="${esc(d.amountText != null ? d.amountText : d.amount ? won(d.amount) : '')}" class="num" aria-describedby="entry-err amount-echo" aria-invalid="${!!d.amountErr && d.amountErr !== 'empty'}"${d.amountErr && d.amountErr !== 'empty' ? ' data-raw="1"' : ''}><span>원</span></div></div>
         <p class="amount-echo num" id="amount-echo" aria-live="polite">${d.amount >= 10000 ? koWon(d.amount) : ''}</p>
         <div class="err" id="entry-err" role="alert">${d.amountErr && d.amountErr !== 'empty' ? WON_ERR[d.amountErr] : ''}</div>
         <p class="entry-ctx" id="entry-ctx">${ctxLine()}</p></div>
-      ${kp ? `<div class="keypad" id="keypad" role="group" aria-label="금액 숫자 키패드">${KEYS.map(k => `<button type="button" class="kp" data-act="key" data-v="${k}" aria-label="${k === 'back' ? '한 자리 지우기' : k === '00' ? '0 두 개' : k}">${k === 'back' ? icon('backspace') : k}</button>`).join('')}</div>` : ''}
+      ${kp ? keypadHtml() : ''}
       <div class="field merchant-field">
         <input id="merchant" name="merchant" class="in" list="mlist" autocomplete="off" placeholder="어디에 썼나요?" aria-label="거래처 (선택 입력)" value="${esc(d.merchant)}">
         <datalist id="mlist">${Object.keys(stats).map(m => `<option value="${esc(m)}">`).join('')}</datalist>
         ${top.length ? `<div class="chips recent-chips">${top.map(m => `<button type="button" class="chip" data-act="merchant" data-v="${esc(m)}" aria-pressed="${d.merchant === m}" aria-label="${esc(m)}">${esc(m)}</button>`).join('')}</div>` : ''}</div>
       ${hasMajorCol() ? `<div class="field cat-pick open" id="cat-pick"><span class="cat-note" id="cat-label">${catLabel()}</span>
         <div class="cat-all"><div class="cat-grid" id="cats" role="group" aria-label="대분류">${MAJOR_NAMES.map(cell).join('')}</div></div></div>`
-      : `<div class="field cat-pick open legacy-cats" id="cat-pick"><span class="cat-note" id="cat-label">대분류 선택은 서버 업데이트 후 사용할 수 있어요 · 지금은 분류로 집계</span>
+      : `<div class="field cat-pick open legacy-cats" id="cat-pick"><span class="cat-note" id="cat-label">${store.serverState() === 'unknown' ? '서버 확인 중 · 확인되면 대분류를 따로 고를 수 있어요 · 지금은 분류로 집계' : '대분류 선택은 서버 업데이트 후 사용할 수 있어요 · 지금은 분류로 집계'}</span>
         <div class="cat-all"><div class="cat-grid" id="cats" role="group" aria-label="분류">${[...new Set([...st.categories, ...(d.category ? [d.category] : [])])].map(c => `<button type="button" class="cat-cell" data-act="ucat" data-v="${esc(c)}" aria-pressed="${d.category === c}"><span class="ci" aria-hidden="true">${categoryIcon(c)}</span><span class="cn">${esc(c)}</span></button>`).join('')}</div></div></div>`}
       <div class="entry-meta">
-        <label class="chip-in duo" for="payer">${icon('card')}<select id="payer" name="payer" aria-label="결제자">${payerList().map(u => `<option ${d.payer === u ? 'selected' : ''}>${u}</option>`).join('')}</select><span class="duo-sep" aria-hidden="true">·</span><select id="method" name="method" aria-label="결제수단">${methods.map(m => `<option ${d.method === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select>${icon('down')}</label>
+        <label class="chip-in duo" for="payer">${icon('card')}<select id="payer" name="payer" aria-label="결제자">${d.payer ? '' : '<option value="" selected>미지정</option>'}${payerList().map(u => `<option ${d.payer === u ? 'selected' : ''}>${u}</option>`).join('')}</select><span class="duo-sep" aria-hidden="true">·</span><select id="method" name="method" aria-label="결제수단">${methods.map(m => `<option ${d.method === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select>${icon('down')}</label>
         <label class="chip-in date-chip" for="date" data-act="datepick"><span class="date-txt" aria-hidden="true">${dotDate(d.date)}</span>${icon('down')}<input id="date" name="date" type="date" aria-label="날짜" value="${esc(d.date)}" max="${today()}"></label></div>
       </div>
       <div class="ep ep-more">
       ${hasMajorCol() ? `<div class="field"><span class="lab" id="dcat-lab">세부 분류 <span class="h2sub">선택 · 대분류와 따로 저장돼요</span></span>
-        <div class="chips dcats" role="group" aria-labelledby="dcat-lab">${dcats.map(c => { const mo = core.majorOf({ category: c, created_at: Date.now() }, catMap()); return `<button type="button" class="chip" data-act="dcat" data-v="${esc(c)}" aria-pressed="${d.category === c}">${esc(c)}<small>${mo.review ? '확인 필요' : core.majorLabel(mo.id)}</small></button>`; }).join('') || '<p class="hint">세부 분류가 없어요. 설정 → 분류·결제수단·결제자에서 추가할 수 있어요.</p>'}</div></div>`
-        : '<p class="notice-soft warn srv-note">서버 업데이트(Apps Script 새 버전) 뒤에 대분류와 세부 분류를 따로 고를 수 있어요. 지금은 기본 탭의 분류 하나로 저장하고, 대분류는 설정 → 대분류 연결로 정해요.</p>'}
+        <p class="dcat-applied" id="dcat-applied">${appliedLine()}</p>
+        <div class="chips dcats" role="group" aria-labelledby="dcat-lab">${dcats.map(c => { const mo = core.majorOf({ category: c, created_at: Date.now() }, catMap()); return `<button type="button" class="chip" data-act="dcat" data-v="${esc(c)}" aria-pressed="${d.category === c}">${esc(c)}<small>${mo.review ? '연결 확인 필요' : '기본 연결: ' + core.majorLabel(mo.id)}</small></button>`; }).join('') || '<p class="hint">세부 분류가 없어요. 설정 → 분류·결제수단·결제자에서 추가할 수 있어요.</p>'}</div></div>`
+        : `<div class="notice-soft warn srv-note"><p>${store.serverState() === 'unknown' ? '서버를 확인하는 중이에요. 확인되면' : '서버 업데이트(Apps Script 새 버전) 뒤에'} 대분류와 세부 분류를 따로 고를 수 있어요. 지금은 기본 탭의 분류 하나로 저장하고, 대분류는 설정 → 대분류 연결로 정해요.</p>${store.serverState() === 'old' ? srvGuide() : ''}</div>`}
       <div class="field"><span class="lab">종류</span><div class="seg">${Object.entries(TYPE_LABEL).map(([k, l]) => `<button type="button" data-act="type" data-v="${k}" aria-pressed="${d.type === k}">${l}</button>`).join('')}</div>
         <p class="hint">이체·카드대금은 ‘지출 제외’로 기록해요. 순지출·카드값에는 더하지 않아요.</p></div>
       <div class="field"><label class="toggle" for="rp"><span>환불 받을 예정</span><input type="checkbox" id="rp" name="refund_pending" ${d.refund_pending ? 'checked' : ''}></label></div>
@@ -1748,7 +1829,15 @@ function catLabel() {
   if (core.MAJOR_IDS.includes(draft.major)) return detail ? `<b>${esc(em)}</b> · 세부 분류 ${esc(c)}` : '';
   return detail ? `세부 분류 <b>${esc(c)}</b>에 따라 ${esc(em)}로 집계 · 대분류를 고르면 그것이 먼저예요` : '';
 }
-function refreshCatLabel() { const el = $('#cat-label'); if (el) el.innerHTML = catLabel(); }
+function refreshCatLabel() { const el = $('#cat-label'); if (el) el.innerHTML = catLabel(); const ap = $('#dcat-applied'); if (ap) ap.innerHTML = appliedLine(); }
+// 상세에서 실제로 적용되는 대분류(Astra v25 P1-13): 칩의 '기본 연결'과 이 기록의 집계를 구분
+function appliedLine() {
+  if (!draft) return '';
+  const em = entryMajor();
+  if (core.MAJOR_IDS.includes(draft.major)) return `이 기록은 <b>${esc(em)}</b>로 집계 · 기본 탭에서 고른 대분류가 먼저예요`;
+  if (draft.category && !MAJOR_NAMES.includes(draft.category)) return `이 기록은 <b>${esc(em)}</b>로 집계 · 세부 분류 ${esc(draft.category)}의 기본 연결`;
+  return '대분류를 고르지 않았어요 · 기본 탭에서 고르거나 세부 분류의 기본 연결을 따라요';
+}
 // 상세 탭 이름 옆 요약: 기본값(지출·환불 예정 없음·메모 없음·세부 분류 없음)이면 비우고, 바꾼 것만
 function moreSummary() {
   const d = draft; if (!d) return '';
@@ -2336,10 +2425,11 @@ document.addEventListener('click', e => {
     case 'antab': view.an = v; saveView(); anPage = 0; payerPage = 0; render(); break;
     case 'ansub': { const [k, x] = v.split(':'); view.anSub[k] = x; saveView(); anPage = 0; render(); break; }
     case 'anpage': anPage += Number(v); render(); break;
-    case 'anpick': { const i = v.indexOf(':'), sub = v.slice(0, i), key = v.slice(i + 1); resetListFilter(); if (sub === 'major') { v25.cat[pv()] = key; saveV25(); } else if (sub === 'detail') lf.cats = [key]; else lf.q = key; view.list = 'rows'; go('list'); break; }
+    // 분석에서 내역으로: 보던 기간·카드·대분류·적용 조건을 그대로 두고 누른 항목만 더한다(Astra v25 P1-12)
+    case 'anpick': { const i = v.indexOf(':'), sub = v.slice(0, i), key = v.slice(i + 1); lf = Object.assign({}, lf); listPage = 0; calDay = ''; if (sub === 'major') { v25.cat[pv()] = key; saveV25(); } else if (sub === 'detail') lf.cats = [key]; else lf.q = key; view.list = 'rows'; go('list'); break; }
     case 'antable': openAnTable(); break;
     case 'payerpage': payerPage += Number(v); render(); break;
-    case 'payerlist': resetListFilter(); lf.payers = [v]; view.list = 'rows'; go('list'); break;
+    case 'payerlist': lf = Object.assign({}, lf, { payers: [v] }); listPage = 0; calDay = ''; view.list = 'rows'; go('list'); break; // 결제자 합계와 같은 조건 + 결제자만(Astra v25 P1-12)
     case 'lpage': listPage += Number(v); render(); { const rc = $('[data-ui-key=rows]'); if (rc && rc.getBoundingClientRect().top < 0) rc.scrollIntoView({ block: 'start' }); } break;
     case 'qgo': { const q = $('[data-input=q]'); if (q) { lf.q = q.value; q.blur(); } listPage = 0; render(); break; }
     /* 카드값 */
@@ -2375,7 +2465,7 @@ document.addEventListener('click', e => {
     case 'mapclear': saveMapItem(true); break;
     case 'cfsave': saveConflict(false); break;
     case 'cfkeep': saveConflict(true); break;
-    case 'cfopen': openConflict(v); break;
+    case 'cfopen': openConflictSafe(v); break;
     /* 공유 상태 */
     case 'statusrow': { if (store.pendingDetail().conflicts && !store.pendingDetail().total) { openConflict(Object.keys(store.conflicts())[0]); break; } const n = store.pendingDetail().total, st = store.status(); if ((n || st.error) && navigator.onLine !== false) { sync(); toast(`공유 대기 ${n}건을 지금 다시 보내요`); } else openSyncSheet(); break; }
     case 'syncsheet': openSyncSheet(); break;
@@ -2385,7 +2475,8 @@ document.addEventListener('click', e => {
     case 'theme': store.setLocal('theme', v === 'system' ? null : v); applyTheme(S.theme); render(); if ($('#sheet .kp-toggle')) setPressed(b.parentElement, v); break;
     case 'appsheet': openAppSheet(); break;
     case 'displaysheet': openDisplaySheet(); break;
-    case 'kptoggle': store.setLocal('keypad', b.checked ? true : null); render(); break;
+    case 'kptoggle': if (!store.setLocal('keypad', !!b.checked)) { b.checked = !b.checked; toast('기기에 저장하지 못했어요'); break; } render(); break;
+    case 'kpmode': { const on = !useKeypad(); if (!store.setLocal('keypad', on)) { toast('기기에 저장하지 못했어요'); break; } setEntryKeypad(on); break; } // 버튼 이름이 바뀌어 알림 없이도 보임(알림이 대분류 칸을 가리지 않게). 이 기기에 기억
     case 'themetoggle': store.setLocal('theme', isDark() ? 'light' : 'dark'); applyTheme(S.theme); render(); break;
     case 'setcycle': openCycleSheet(); break;
     case 'setlists': openListsSheet(); break;
@@ -2431,7 +2522,7 @@ document.addEventListener('click', e => {
     }
     case 'impchk': {
       const it = imp.items[Number(v)];
-      if (b.checked && impBlocked(it)) { b.checked = false; break; } // 선택 불가(체크 비활성) — 고치는 건 '수정' 버튼으로
+      if (b.checked && impBlocked(it)) { b.checked = false; break; } // 선택 불가(체크 비활성): 고치는 건 '수정' 버튼으로
       it.on = b.checked; b.closest('.import-row').classList.toggle('on', it.on); refreshImpFooter(); break;
     }
     case 'impsel': if (!commitEdit()) break; imp.items.forEach(it => { it.on = v === 'new' ? impDefaultOn(it) : false; }); imp.err = ''; renderImport(); break;
@@ -2489,8 +2580,12 @@ document.addEventListener('click', e => {
     case 'rdelete': deleteRule(); break;
     case 'disconnect':
       if (store.pendingDetail().total) { toast('공유 대기 기록·설정이 있어요. 먼저 공유해 주세요'); break; }
+      if (store.pendingDetail().conflicts) { openDisconnectGuard(); break; }
       if (confirm('이 기기 연결을 해제할까요? 기록은 구글 시트에 남아 있어요.')) store.disconnect();
       break;
+    case 'discdrop': dropAndDisconnect(); break;
+    case 'cfpick': { const [f, w] = v.split('|'); cfState.picks[f] = w; const c = store.conflicts()[cfState.key]; const pe = $('#cf-progress'); if (c && pe) { const n = c.fields.filter(x => cfState.picks[x]).length; pe.querySelector('.num').textContent = n + '/' + c.fields.length; } const er = $('#cf-err'); if (er) er.textContent = ''; break; }
+    case 'cfpage': cfState.page += Number(v); openConflict(cfState.key, true); break;
   }
 });
 document.addEventListener('input', e => {

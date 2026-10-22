@@ -311,7 +311,7 @@
 @media (width < 360px) {
   :root { --page-gutter: 16px; --hero-padding: 16px; --fs-amount: 2rem; --lh-amount: 1.25; }
 }
-@media (min-width: 600px) and (max-width: 840px) {
+@media (min-width: 600px) and (width < 840px) {
   :root { --page-gutter: 24px; }
 }
 @media (width >= 840px) {
@@ -2197,15 +2197,15 @@ header.top{min-height:56px}
 .set-body{margin-top:2px}
 .set-body .theme-seg{margin:10px 0}
 .screen-settings .page-title,.screen-recur .page-title{margin:0 0 4px}
-.screen-settings .page-title h1,.screen-recur .page-title h1{font-size:1.5rem;line-height:2.75rem}
+.screen-settings .page-title h1,.screen-recur .page-title h1{font-size:1.5rem;line-height:1.9375rem;font-weight:700;min-height:44px;display:flex;align-items:center}
 /* 기록: 기본 / 상세 */
 .entry-seg{margin:10px 0 0}
-.entry-seg .es-sum{display:block;font-size:.6875rem;line-height:1rem;font-weight:500;color:var(--text-3);overflow-wrap:anywhere}
+.entry-seg .es-sum{display:block;font-size:.75rem;line-height:1rem;font-weight:500;color:var(--text-3);overflow-wrap:anywhere}
 .entry-seg .es-sum:empty{display:none}
 [data-form=entry].stage-basic .ep-more,[data-form=entry].stage-more .ep-basic{display:none}
 .ep-more{padding-top:6px}
 .dcats .chip{display:inline-flex;align-items:center;gap:6px}
-.dcats .chip small{font-size:.6875rem;color:var(--text-3)}
+.dcats .chip small{font-size:.75rem;color:var(--text-3)}
 /* Fable v24 잔여 P2: 투명 날짜 입력 위 포커스 링이 보이게, 다크 칩·보조 면 경계 대비 */
 .date-chip:focus-within{outline:3px solid var(--brand);outline-offset:3px}
 .date-chip input[type=date]:focus-visible{outline:none}
@@ -2233,7 +2233,7 @@ header.top{min-height:56px}
 .me-row .me-seg{flex:0 0 152px;margin-left:auto}
 .screen-settings .settings-row{min-height:60px;padding-block:8px}
 .home-hero.h25 .hero-cmp,.home-hero.h25 .hero-range,.home-hero.h25 .hero-meta-t,.home-hero.h25 .hero-h{text-align:left}
-@media (width <= 840px){body{padding-bottom:calc(var(--nav-h) + 14px)}}
+@media (width < 840px){body{padding-bottom:calc(var(--nav-h) + 14px)}}
 .cal-sel-acts .cal-add{margin:0;min-width:64px}
 .cal-sel-acts{margin:-4px -6px 0 0}
 .home-info .link,.home-info .after-close{margin:0;min-height:44px}
@@ -2286,9 +2286,9 @@ header.top{min-height:56px}
 @media (max-width:359px){.home-hero.h25 .amt{font-size:2.125rem;line-height:2.6875rem}}
 .total-row b{font-size:1.75rem;line-height:2.25rem;font-weight:700}
 .sheet-h h2{font-size:1.25rem;line-height:1.75rem;font-weight:650}
-.utabs button{min-height:47px}
+.utabs button{min-height:50px}
 /* 아래 탭 선택은 브랜드색(spec P2-06) */
-nav.tabs button[aria-current=page]{color:var(--brand-text)}
+nav.tabs button[aria-current=page]{color:var(--brand)} /* 선택색 #29583B / 다크 #D7F797 (Astra v25 P2-06) */
 /* 머리글: 결제자 이니셜 없음(홈에 결제자 요약을 두지 않음, spec 5절) */
 .top-r{gap:4px}
 /* 가져오기 확인 3건/쪽이 한 화면에(390×844 ≤84px): 요약 한 줄, 행 여백 줄임 */
@@ -2299,6 +2299,29 @@ nav.tabs button[aria-current=page]{color:var(--brand-text)}
 .import-row{padding-block:8px;min-height:0}
 .import-row .imp-act{margin-top:0}
 @media (max-height:700px){.with-kp .entry-ctx,.with-kp .amount-echo{display:none}}
+/* ===== v25 3차(Astra 재확인 P1·P2, Fable 재검토) ===== */
+/* 예산 합계 28/36/700(spec 11.2) */
+.bud-total .bt-amt{font-weight:700}
+/* 기록 금액 입력 방식 전환: 금액 제목 줄 오른쪽의 조용한 글자 버튼(44px 터치) */
+.amount-lab{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:44px}
+[data-form=entry] .amount-card{padding-top:4px}
+.kp-mode{flex:none;min-height:44px;min-width:44px;margin:0 -8px 0 0;padding:0 8px;border:0;background:none;border-radius:12px;color:var(--brand-text);font:inherit;font-size:.8125rem;font-weight:600}
+/* 상세: 이 기록에 실제로 적용되는 대분류(칩의 '기본 연결'과 구분), 12px 이상 */
+.dcat-applied{margin:2px 0 8px;font-size:.8125rem;line-height:1.1875rem;color:var(--text-2)}
+.dcat-applied b{color:var(--brand-text)}
+/* 서버 업데이트 안내(예산·기록): 접어 둔 방법 */
+.srv-budget{margin:8px 0}
+.srv-budget p{margin:0}
+.srv-guide{margin-top:6px}
+.srv-guide summary{min-height:44px;display:flex;align-items:center;font-weight:650;cursor:pointer}
+.srv-guide ol{margin:0 0 6px;padding-left:20px}
+.srv-guide li,.srv-guide p{font-size:.8125rem;line-height:1.25rem}
+/* 충돌 시트: 고치기 전 값, 고른 항목 수 */
+.cf-row legend .h2sub{font-weight:500;margin-left:6px}
+.cf-lead b{white-space:nowrap}
+.cf-progress{margin-top:4px}
+.cf-link{display:inline-flex;align-items:center;gap:2px;min-height:44px;font-weight:650;color:var(--brand-text)}
+.danger-t{color:var(--expense)}
 </style>
 </head>
 <body>

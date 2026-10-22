@@ -648,7 +648,8 @@
   }
 
   /* 대분류 8개(spec 7절). 거래의 category 칸(시트 '분류' 열)은 그대로 두고, 대분류는 읽을 때 정한다(서버·시트 변경 없음).
-   * 우선순위: 건별 대분류(거래의 major 칸, v25 2차 서버 열) → 분류 이름이 대분류 이름 → 사용자가 확정한 세부 분류 연결(prefs.cat_map) → 기본 분류 표 → 기타+확인 필요.
+   * 우선순위(spec 7.1, v25 3차 Astra P1-14): 건별 대분류(거래의 major 칸, v25 2차 서버 열) → 사용자가 확정한 세부 분류 연결(prefs.cat_map) → 기본 분류 표(대분류 이름과 같은 분류 포함) → 기타+확인 필요.
+   * 분류 칸에 대분류 이름(예: '생활')이 적혀 있다는 이유만으로 건별 선택으로 올리지 않는다(확정 연결이 있으면 그것이 먼저). 거래처별 기본 대분류는 아직 없다
    * 광범위 글자 추정으로 확정하지 않는다: MAJOR_HINT는 연결 화면의 '제안'에만 쓴다 */
   const MAJORS = [['food', '식비'], ['living', '생활'], ['transport', '교통'], ['shopping', '쇼핑'], ['fixed', '고정지출'], ['medical', '의료'], ['leisure_social', '여가·경조'], ['other', '기타']].map(([id, label]) => ({ id, label }));
   const MAJOR_IDS = MAJORS.map(m => m.id);
@@ -662,7 +663,6 @@
     if (t && MAJOR_IDS.includes(t.major)) return { id: t.major, review: false, source: 'tx' }; // v25 2차: 건별 대분류(시트 major 열)가 가장 먼저
     const c = String(t && t.category || '').trim();
     if (!c || c === '미분류') return { id: 'other', review: true, source: 'none', hint: '' };
-    if (MAJOR_BY_LABEL[c]) return { id: MAJOR_BY_LABEL[c], review: false, source: 'major' };
     const m = mapTarget(map && Object.prototype.hasOwnProperty.call(map, c) ? map[c] : null);
     if (m && (!m.since || (Number(t.created_at) || 0) >= m.since)) return { id: m.id, review: false, source: 'map' };
     if (MAJOR_TABLE[c]) return { id: MAJOR_TABLE[c], review: false, source: 'table' };

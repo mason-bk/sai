@@ -525,6 +525,7 @@
       if (f.kind === 'refund_pending' && !t.refund_pending) return false;
       if (['expense', 'refund', 'transfer'].includes(f.kind) && (t.type || 'expense') !== f.kind) return false;
       if (q && ![t.merchant, t.note, t.category, t.method, t.payer].join(' ').toLowerCase().includes(q)) return false;
+      if (f.merchant && (t.merchant || '') !== f.merchant) return false; // v25 4차: 분석에서 누른 거래처와 정확히 같은 기록만(검색어와 따로, Astra P1-12)
       return true;
     });
   }
@@ -601,7 +602,7 @@
     const card = new Set(cardMethods || []), inRange = txs.filter(t => !t.deleted && t.date >= range.start && t.date <= range.end && t.type !== 'transfer');
     const list = inRange.filter(t => card.has(t.method || '')), rest = inRange.filter(t => !card.has(t.method || ''));
     const s = summarize(list), by = {};
-    list.forEach(t => { const p = t.payer || '공동'; by[p] = (by[p] || 0) + signed(t); });
+    list.forEach(t => { const p = t.payer || '미지정'; by[p] = (by[p] || 0) + signed(t); }); // 빈 결제자는 '미지정'(공동과 따로, Fable v25 P2-4)
     const order = [...(payers || []), ...Object.keys(by)].filter((p, i, a) => a.indexOf(p) === i && p in by);
     return Object.assign(s, { txs: list, shares: payerShares(order.map(p => [p, by[p]])), outside: { count: rest.length, net: rest.reduce((a, t) => a + signed(t), 0) } });
   }
@@ -678,11 +679,10 @@
   function mappingQueue(txs, map, extraNames) {
     const g = {};
     const touch = name => g[name] || (g[name] = { name, count: 0, net: 0, examples: [], past: 0 });
-    (extraNames || []).forEach(n => { const s = String(n || '').trim(); if (s && !MAJOR_BY_LABEL[s]) touch(s); });
+    (extraNames || []).forEach(n => { const s = String(n || '').trim(); if (s) touch(s); }); // v25 4차: 대분류 이름과 같은 옛 분류도 연결 대상(Astra P1-14)
     txs.forEach(t => {
       if (t.deleted) return;
       const name = String(t.category || '').trim() || '미분류';
-      if (MAJOR_BY_LABEL[name]) return;
       const x = touch(name); x.count++; x.net += signed(t);
       if (x.examples.length < 2) x.examples.push(t);
     });

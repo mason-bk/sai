@@ -2305,7 +2305,7 @@ nav.tabs button[aria-current=page]{color:var(--brand)} /* 선택색 #29583B / �
 /* 기록 금액 입력 방식 전환: 금액 제목 줄 오른쪽의 조용한 글자 버튼(44px 터치) */
 .amount-lab{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:44px}
 [data-form=entry] .amount-card{padding-top:4px}
-.kp-mode{flex:none;min-height:44px;min-width:44px;margin:0 -8px 0 0;padding:0 8px;border:0;background:none;border-radius:12px;color:var(--brand-text);font:inherit;font-size:.8125rem;font-weight:600}
+.kp-mode{flex:none;min-height:44px;min-width:44px;margin:0 -8px 0 0;padding:0 8px;border:0;background:none;border-radius:12px;color:var(--lime);text-decoration:underline;text-underline-offset:3px;font:inherit;font-size:.8125rem;font-weight:600}
 /* 상세: 이 기록에 실제로 적용되는 대분류(칩의 '기본 연결'과 구분), 12px 이상 */
 .dcat-applied{margin:2px 0 8px;font-size:.8125rem;line-height:1.1875rem;color:var(--text-2)}
 .dcat-applied b{color:var(--brand-text)}
@@ -2322,6 +2322,8 @@ nav.tabs button[aria-current=page]{color:var(--brand)} /* 선택색 #29583B / �
 .cf-progress{margin-top:4px}
 .cf-link{display:inline-flex;align-items:center;gap:2px;min-height:44px;font-weight:650;color:var(--brand-text)}
 .danger-t{color:var(--expense)}
+/* v25 4차: 짙은 금액 카드 위 입력 방식 전환은 라임(#D7F797, 대비 12:1 이상), 포커스 링도 라임 */
+.kp-mode:focus-visible{outline:2px solid var(--lime);outline-offset:2px}
 </style>
 </head>
 <body>

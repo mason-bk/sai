@@ -8,7 +8,7 @@ const payerList = () => [...new Set([...USERS, ...(S.settings.beneficiaries || [
 const TYPE_LABEL = { expense: '지출', refund: '환불', transfer: '지출 제외' };
 const upsert = rec => store.upsert(rec);
 const sync = () => store.sync();
-store.on('change', () => render());
+store.on('change', () => { render(); refreshBudHelp(); });
 store.on('status', () => renderStatus());
 store.on('notice', msg => toast(msg));
 // 공유 예산 충돌(v25 2차·3차): 다른 기기가 같은 달 예산을 먼저 고침 → 내 값은 보관하고 고르게 한다.
@@ -16,6 +16,7 @@ store.on('notice', msg => toast(msg));
 store.on('conflict', keys => {
   if (!$('#sheet').open) { openConflict(keys[0]); return; }
   if ($('#sheet .bud-nav') && !$('#sheet [data-form]')) openBudget(); // 예산 보기가 열려 있으면 알림줄이 보이게 다시 그림
+  refreshBudHelp(); // 예산 수정 중이면 참고값만 갱신
   toast('상대가 먼저 예산을 고쳤어요 · 내 값은 보관했어요', '비교하기', () => openConflictSafe(keys[0]));
 });
 // 작성 중인 기록은 초안으로 남기고(stashDraft) 비교 시트를 연다. 예산 수정 중이면 그 입력을 버리지 않게 묻지 않고 알림만 남긴다
@@ -671,7 +672,7 @@ function homeView() {
     hero = `<section class="card hero home-hero h25 bill" data-ui-key="hero" aria-label="장부 기준 카드값${mj === 'all' ? '' : ', ' + mjLabel(mj) + '만'}">
       <div class="hero-top"><p class="eyebrow">${mj === 'all' ? '장부 기준 카드값' : esc(mjLabel(mj)) + ' · 청구 중 일부'}</p><span class="dday num" aria-label="${p.days < 0 ? -p.days + '일 지났어요' : p.days === 0 ? '결제일이 오늘이에요' : '결제일까지 ' + p.days + '일'}">${dd}</span></div>
       ${amt(net)}
-      <div class="hero-meta"><span class="hm-t">${mj === 'all' ? `${esc(cardScope())} · ${list.length}건` : `${esc(cardLabel())} 전체 <span class="num">${won(allNet)}원</span>`}</span><button class="hero-link" data-act="cardpick" aria-haspopup="dialog">카드 변경</button></div>
+      <div class="hero-meta"><span class="hm-t">${mj === 'all' ? `${esc(cardScope())} · ${list.length}건` : `${esc(cardLabel())} 전체 <span class="num">${won(allNet)}원</span> · ${selCard() ? '결제수단 필터' : '공통 이용 기간·결제일'}`}</span><button class="hero-link" data-act="cardpick" aria-haspopup="dialog">카드 변경</button></div>
       <button class="hero-cta" data-act="stmt" aria-haspopup="dialog"><span>명세서 맞추기</span>${icon('right')}</button></section>`;
   } else {
     const cmp = core.monthCompare(moff, new Date()), c = core.compareNet(core.scopeTxs(liveTxs(), { range: null, methods: null, major: mj, map: catMap() }), cmp);
@@ -971,6 +972,12 @@ function openBudget(fresh) {
     <div class="sheet-footer">${foot}</div></div>`, true);
 }
 // 한 항목 수정: 금액 하나 + 적용 범위(이 달만 / 이후 달에도) + 취소·저장. 참고 금액(지난달 쓴 돈)은 입력 아래 본문으로(spec 9절)
+// 수정 화면의 참고값(배정 합계·전체·다른 대분류 합계): 동기화·충돌로 공유 값이 바뀌면 입력은 두고 이 줄만 다시 씀(Fable P2-8)
+function budHelp(field) {
+  const b = core.budgetFor(budgetPrefs(), bud.ym), chk = core.budgetCheck(b), total = field === 'total', cur = total ? b.total : b.cats[field] || 0, others = chk.allocated - (total ? 0 : cur);
+  return `${total ? `대분류 배정 합계 <span class="num">${won(chk.allocated)}원</span>` : `이 달 전체 예산 <span class="num">${b.total ? won(b.total) + '원' : '미설정'}</span> · 다른 대분류 합계 <span class="num">${won(others)}원</span>`}<br>빈칸이나 0은 이 항목의 예산 제한을 해제해요.`;
+}
+const refreshBudHelp = () => { const h = $('#sheet [data-form=budget] #bud-help'); if (h && bud.field) { const x = budHelp(bud.field); if (h.innerHTML !== x) h.innerHTML = x; } };
 function budgetEditHtml(field, err, text, scope) {
   const r = core.monthOf(bud.ym), b = core.budgetFor(budgetPrefs(), bud.ym), chk = core.budgetCheck(b), total = field === 'total';
   const name = total ? '전체' : core.majorLabel(field), cur = total ? b.total : b.cats[field] || 0;
@@ -981,7 +988,7 @@ function budgetEditHtml(field, err, text, scope) {
       <div class="field"><label for="${total ? 'b-total' : 'b-cat'}">${name} 예산 (원)</label>
         <div class="amount-in"><input id="${total ? 'b-total' : 'b-cat'}" name="amount" data-money inputmode="numeric" autocomplete="off" placeholder="미설정" value="${esc(v)}" class="num" aria-describedby="budget-err bud-help" style="--len:${Math.max(6, v.length)}"></div>
         <p class="amount-echo num" aria-live="polite">${cur >= 10000 && text == null ? koWon(cur) : ''}</p>
-        <p class="hint" id="bud-help">${total ? `대분류 배정 합계 <span class="num">${won(chk.allocated)}원</span>` : `이 달 전체 예산 <span class="num">${b.total ? won(b.total) + '원' : '미설정'}</span> · 다른 대분류 합계 <span class="num">${won(others)}원</span>`}<br>빈칸이나 0은 이 항목의 예산 제한을 해제해요.</p>
+        <p class="hint" id="bud-help">${budHelp(field)}</p>
         ${store.serverState() !== 'new' ? '' : `<p class="hint bud-ref">참고: 지난달(${parseDate(core.monthOf(core.addMonths(bud.ym, -1)).start).getMonth() + 1}월) ${name === '전체' ? '' : name + '에 '}쓴 돈 <span class="num">${won(last)}원</span></p>`}</div>
       <fieldset class="field bud-scope"><legend class="lab">적용 범위</legend>
         <label class="radio-row"><input type="radio" name="scope" value="month" ${scope !== 'future' ? 'checked' : ''}><span>${ml}만</span></label>
@@ -1027,8 +1034,18 @@ function saveBudget(f) {
   const ss = store.serverState();
   if (ss !== 'new') return fail(ss === 'old' ? '공유 예산을 저장하려면 서버 업데이트가 필요해요' : '서버를 확인하는 중이에요. 연결된 뒤 다시 저장해 주세요');
   // 기준 = 편집을 시작할 때 본 값(그 사이 상대 수정이 들어왔으면 보낼 때 내 값·상대 값·처음 값을 비교)
-  const snap = bud.snap || {}, base = {}; Object.keys(patch).forEach(k => { if (/^b[mt]:/.test(k)) base[k] = k in snap ? snap[k] : null; });
-  if (!store.setPrefs(patch, { base })) return fail('저장하지 못했어요. 입력은 그대로 두었어요');
+  // v25 4차(Astra P0-02 B): 내 변경 = 편집 시작 값에 내 수정만 적용한 값(edit). 편집 중 받은 상대 값은 내 변경으로 치지 않는다.
+  // 새로 만드는 키(그 달만·이후 달)는 그때 물려받던 기본값을 dep로 남겨, 보내기 전 기본값이 바뀌었으면 비교한다
+  const snap = bud.snap || {}, base = {}, edit = {}, dep = {};
+  const fromSnap = core.budgetApply(snap, bud.ym, field, r.value, scope, { by: S.me || '', at: Date.now() });
+  const tplBefore = lim => Object.keys(snap).filter(k => k.startsWith('bt:') && core.validYm(k.slice(3)) && k.slice(3) <= lim && snap[k]).sort().pop();
+  Object.keys(patch).forEach(k => {
+    if (!/^b[mt]:/.test(k)) return;
+    base[k] = k in snap ? snap[k] : null;
+    if (fromSnap.ok && k in fromSnap.patch) edit[k] = { from: k in snap ? snap[k] : null, to: fromSnap.patch[k] };
+    if (!(k in snap)) { const src = k.startsWith('bm:') ? tplBefore(k.slice(3)) : tplBefore(core.addMonths(k.slice(3), -1)); if (src) dep[k] = { key: src, value: snap[src] }; }
+  });
+  if (!store.setPrefs(patch, { base, edit, dep })) return fail('저장하지 못했어요. 입력은 그대로 두었어요');
   bud.tab = field === 'total' ? 'total' : 'cat'; openBudget(); savedToast('예산을 저장했어요');
 }
 // 처음 한 번: 기존 주기 예산을 조용히 월 예산으로 바꾸지 않는다(spec 6.2). 비교를 보여 주고 고르게 한다
@@ -1094,9 +1111,17 @@ function openConflict(key, keep) {
   const ym = key.slice(3), r = core.monthOf(ym), what = key.startsWith('bt:') ? `${r.year}년 ${r.month}월부터 이후 기본값` : `${r.year}년 ${r.month}월 예산`;
   const others = Object.keys(all).length - 1, who = c.theirs && c.theirs.by ? '(' + esc(c.theirs.by) + ')' : '';
   const merged = store.merge3(c.base, c.mine, c.theirs).value, sum = Object.values(merged.cats || {}).reduce((a, n) => a + (Number(n) || 0), 0);
-  const lead = c.reason === 'over'
+  const tOver = store.overBy(c.theirs), srvOld = store.serverState() !== 'new';
+  const depNote = c.dep ? (() => { const d = core.monthOf(c.dep.slice(3)); return `<p class="hint">이 달 예산을 새로 정하는 사이 ${d.year}년 ${d.month}월부터 쓰던 기본값이 바뀌었어요. '상대가 바꾼 값'은 바뀐 기본값이에요.</p>`; })() : '';
+  // 상대 값 자체가 합계를 넘는 경우(Fable P2-3), 서버가 다시 옛 버전이 된 경우(Fable P2-5)도 알린다
+  const extra = depNote + (tOver ? `<p class="hint over-t">상대가 저장한 값도 대분류 합계가 전체 예산보다 ${won(tOver)}원 커요. 고른 뒤 합계를 다시 확인해요.</p>` : '')
+    + (srvOld ? `<p class="notice-soft warn">서버가 옛 버전이라 지금은 고른 값을 저장할 수 없어요. 내 값은 이 기기에 남아 있어요.</p>` : '');
+  const lead0 = c.reason === 'race'
+    ? `<p class="hint cf-lead">${esc(what)}을 두 기기가 거의 동시에 여러 번 저장했어요${who}. 항목마다 하나를 골라 주세요.</p>`
+    : c.reason === 'over'
     ? `<p class="hint cf-lead">${esc(what)}의 다른 항목을 다른 기기에서 먼저 바꿨어요${who}. 두 사람 것을 합치면 대분류 합계 <b class="num">${won(sum)}원</b> / 전체 <b class="num">${cfAmt(Number(merged.total) || 0)}</b> · <b class="num">${won(c.over || Math.max(0, sum - (Number(merged.total) || 0)))}원 초과</b>라 자동으로 합치지 않았어요. 항목마다 하나를 골라 주세요.</p>`
     : `<p class="hint cf-lead">${esc(what)}의 같은 항목을 다른 기기에서 먼저 바꿨어요${who}. 항목마다 하나를 골라 주세요. 다른 항목은 두 사람 것을 합쳤어요.</p>`;
+  const lead = lead0 + extra;
   const pg = core.pageOf(c.fields.length, cfState.page, 2); cfState.page = pg.page;
   const done = c.fields.filter(f => cfState.picks[f]).length;
   showSheet(`<div class="sheet-wrap" data-conflict="${esc(key)}">${sheetHead('상대가 먼저 고쳤어요')}
@@ -1309,8 +1334,9 @@ function lfToolbar() {
   const kindName = KINDS.find(k => k[0] === lf.kind)[1];
   const chips = [['cats', lf.cats.length === 1 ? lf.cats[0] : '세부 분류 ' + lf.cats.length, lf.cats.length], ['payers', lf.payers.length === 1 ? lf.payers[0] + ' 결제' : '결제자 ' + lf.payers.length, lf.payers.length],
     ['methods', lf.methods.length === 1 ? lf.methods[0] : '결제수단 ' + lf.methods.length, lf.methods.length], ['amount', amtLabel(lf), lf.min || lf.max], ['kind', kindName, lf.kind !== 'all']].filter(c => c[2]);
-  if (!chips.length && !lf.q.trim() && lf.period === 'cycle') return '';
-  return `<div class="filter-toolbar" data-ui-key="lf-toolbar"><div class="filters" role="group" aria-label="추가 조건">${chips.map(([k, label]) => `<button class="chip" data-act="lfopen" data-v="${k}" aria-pressed="true"><span>${esc(label)}</span>${icon('down')}</button>`).join('')}</div><button class="link lf-reset" data-act="lfclear">조건 지우기</button></div>`;
+  const mchip = lf.merchant ? `<button class="chip" data-act="lfmerchx" aria-pressed="true" aria-label="거래처 ${esc(lf.merchant)} 조건 지우기"><span>거래처 ${esc(lf.merchant)}</span>${icon('x')}</button>` : '';
+  if (!chips.length && !mchip && !lf.q.trim() && lf.period === 'cycle') return '';
+  return `<div class="filter-toolbar" data-ui-key="lf-toolbar"><div class="filters" role="group" aria-label="추가 조건">${chips.map(([k, label]) => `<button class="chip" data-act="lfopen" data-v="${k}" aria-pressed="true"><span>${esc(label)}</span>${icon('down')}</button>`).join('')}${mchip}</div><button class="link lf-reset" data-act="lfclear">조건 지우기</button></div>`;
 }
 const LIST_TABS = [['rows', '목록'], ['cal', '달력'], ['payer', '결제자']];
 const PAGE_ROWS = 4;
@@ -2336,7 +2362,7 @@ function impSave() {
 
 /* ---------------- 내역 필터(추가 조건) ----------------
  * 기간 '보던 기간' = 위의 월별/카드 청구 기간(lf.period 'cycle'), 또는 전체 기간·직접 지정. 대분류는 칩, 여기서는 세부 분류·결제자·결제수단·금액·종류 */
-const LF0 = () => ({ period: 'cycle', from: '', to: '', cats: [], payers: [], methods: [], min: 0, max: 0, kind: 'all', q: '' });
+const LF0 = () => ({ period: 'cycle', from: '', to: '', cats: [], payers: [], methods: [], min: 0, max: 0, kind: 'all', q: '', merchant: '' });
 let lf = LF0(), lfDraft = null, lfOpenSum = false;
 const KINDS = [['all', '전체'], ['expense', '지출'], ['refund', '환불'], ['refund_pending', '환불 대기'], ['transfer', '지출 제외']];
 const lfActive = f => f.cats.length + f.payers.length + (f.methods || []).length + (f.min || f.max ? 1 : 0) + (f.kind !== 'all' ? 1 : 0) + (f.period !== 'cycle' ? 1 : 0) + (f.q.trim() ? 1 : 0);
@@ -2354,6 +2380,8 @@ function lfSummary(f) {
   const parts = [f.period === 'all' ? '전체 기간' : f.period === 'custom' ? '직접 지정' : '', f.cats.length ? '세부 분류 ' + f.cats.length : '', f.payers.length ? '결제자 ' + f.payers.length : '', (f.methods || []).length ? '결제수단 ' + f.methods.length : '', f.min || f.max ? '금액' : '', f.kind !== 'all' ? KINDS.find(k => k[0] === f.kind)[1] : ''].filter(Boolean);
   return parts.length ? '조건: ' + parts.join(' · ') : '추가 조건 없음';
 }
+// 결제자 필터: 설정의 사람 + 실제 기록에 남은 결제자 + 미지정(빈 결제자, Astra P1-08) + 이미 고른 값
+const lfPayers = f => [...new Set([...payerList(), ...liveTxs().map(t => t.payer || '미지정'), ...(f.payers || [])])];
 const methodList = f => [...new Set([...S.settings.methods, ...liveTxs().map(t => t.method || '미지정'), ...(f.methods || [])])];
 function lfSheetHtml() {
   const f = lfDraft, cats = [...new Set([...S.settings.categories, ...liveTxs().map(t => t.category || '미분류')])];
@@ -2376,7 +2404,7 @@ function lfSheetHtml() {
         <div class="err">${badDate ? '시작일이 끝일보다 늦어요' : ''}</div>
       </section>
       <section class="filter-section" id="lf-cats"><h3>세부 분류 <span class="h2sub">여러 개 고를 수 있어요</span></h3><div class="chips">${cats.map(c => chip('lfcat', c, f.cats.includes(c), c)).join('')}</div></section>
-      <section class="filter-section" id="lf-payers"><h3>결제자</h3><div class="chips">${payerList().map(p => chip('lfpayer', p, f.payers.includes(p), p)).join('')}</div></section>
+      <section class="filter-section" id="lf-payers"><h3>결제자</h3><div class="chips">${lfPayers(f).map(p => chip('lfpayer', p, f.payers.includes(p), p)).join('')}</div></section>
       <section class="filter-section" id="lf-methods"><h3>결제수단 <span class="h2sub">카드 명세서와 맞춰 볼 때</span></h3><div class="chips">${methodList(f).map(m => chip('lfmethod', m, f.methods.includes(m), m)).join('')}</div></section>
       <section class="filter-section" id="lf-amount"><h3>금액</h3><div class="row2 amt-range">
         <label>최소 금액(원)<input class="in num" data-money data-input="lfmin" inputmode="numeric" autocomplete="off" placeholder="제한 없음" value="${esc(f.minText != null ? f.minText : f.min ? won(f.min) : '')}" aria-invalid="${!!f.minBad}"${f.minBad ? ' data-raw="1"' : ''}></label>
@@ -2426,9 +2454,10 @@ document.addEventListener('click', e => {
     case 'ansub': { const [k, x] = v.split(':'); view.anSub[k] = x; saveView(); anPage = 0; render(); break; }
     case 'anpage': anPage += Number(v); render(); break;
     // 분석에서 내역으로: 보던 기간·카드·대분류·적용 조건을 그대로 두고 누른 항목만 더한다(Astra v25 P1-12)
-    case 'anpick': { const i = v.indexOf(':'), sub = v.slice(0, i), key = v.slice(i + 1); lf = Object.assign({}, lf); listPage = 0; calDay = ''; if (sub === 'major') { v25.cat[pv()] = key; saveV25(); } else if (sub === 'detail') lf.cats = [key]; else lf.q = key; view.list = 'rows'; go('list'); break; }
+    case 'anpick': { const i = v.indexOf(':'), sub = v.slice(0, i), key = v.slice(i + 1); lf = Object.assign({}, lf); listPage = 0; calDay = ''; if (sub === 'major') { v25.cat[pv()] = key; saveV25(); } else if (sub === 'detail') lf.cats = [key]; else lf.merchant = key; view.list = 'rows'; go('list'); break; } // 거래처는 검색어를 바꾸지 않고 정확히 그 거래처(Astra P1-12)
     case 'antable': openAnTable(); break;
     case 'payerpage': payerPage += Number(v); render(); break;
+    case 'lfmerchx': lf = Object.assign({}, lf, { merchant: '' }); listPage = 0; render(); break;
     case 'payerlist': lf = Object.assign({}, lf, { payers: [v] }); listPage = 0; calDay = ''; view.list = 'rows'; go('list'); break; // 결제자 합계와 같은 조건 + 결제자만(Astra v25 P1-12)
     case 'lpage': listPage += Number(v); render(); { const rc = $('[data-ui-key=rows]'); if (rc && rc.getBoundingClientRect().top < 0) rc.scrollIntoView({ block: 'start' }); } break;
     case 'qgo': { const q = $('[data-input=q]'); if (q) { lf.q = q.value; q.blur(); } listPage = 0; render(); break; }

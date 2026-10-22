@@ -46,6 +46,16 @@ const REV_KEY = /^b[mt]:\d{4}-\d{2}$/;
 const revOf = v => (v && typeof v === 'object' && Number(v.rev)) || 0;
 // 합친 예산의 대분류 합계가 전체 예산을 넘는 금액(전체 미설정이면 0). core.budgetCheck와 같은 규칙(데이터 층만 따로 실행될 때를 위해 같은 식)
 const overBy = v => { if (!v || typeof v !== 'object') return 0; const t = Number(v.total) || 0, c = v.cats && typeof v.cats === 'object' ? v.cats : {}; const sum = Object.values(c).reduce((a, x) => a + (Number(x) > 0 ? Number(x) : 0), 0); return t > 0 && sum > t ? sum - t : 0; };
+// 예산 값의 비교용 핵심(전체·대분류만)
+const coreOf = v => v && typeof v === 'object' ? { total: Number(v.total) || 0, cats: Object.assign({}, v.cats || {}) } : null;
+/* v25 4차(Astra P0-02 B): 내가 실제로 바꾼 항목만 내 변경으로. from = 편집을 시작할 때 본 값, to = 그 값에 내 수정을 적용한 값.
+ * 이전 내 변경(prev) 위에 from→to에서 바뀐 항목만 얹는다(편집 중 받은 상대 값은 섞지 않음) */
+function applyEdit(prev, from, to) {
+  if (to == null) return null;
+  if (prev == null) return JSON.parse(JSON.stringify(to));
+  const v = merge3(from, prev, to).value; ['rev', 'by', 'at'].forEach(k => { if (k in to) v[k] = to[k]; });
+  return v;
+}
 // 내 값과 상대 값이 다른 예산 항목('total', 'cats.<id>'): 합계 초과로 자동 합치지 못할 때 고를 항목
 function diffFields(m, t) {
   const J = v => JSON.stringify(v === undefined ? null : v), out = [];
@@ -151,20 +161,35 @@ const store = (() => {
         // 보낼 내용과 '보낸 뒤 바뀌었는지' 비교 기준을 기다리기 전에 함께 고정한다
         const sent = JSON.stringify(S.pendingSettings), dirty = (S.prefsDirty || []).slice();
         const out = JSON.parse(sent);
-        const prefsBase = {}, found = {}, mine = {};
+        const prefsBase = {}, found = {}, mine = {}, hold = {};
+        // v25 4차(Fable P1): 바꾼 prefs 키가 없으면 prefs를 보내지 않는다(기준 없이 통째로 보내 상대 변경을 덮지 않게)
+        if (out.prefs && !dirty.length) delete out.prefs;
         if (out.prefs && dirty.length) {
           // 보내기 직전 서버의 최신 prefs를 받아 그 위에 얹는다(기록은 건드리지 않는 빈 동기화)
           const pre = await api({ action: 'sync', since: Number.MAX_SAFE_INTEGER, ops: [] });
-          if (pre.features) S.features = pre.features;
+          S.features = Array.isArray(pre.features) ? pre.features : []; // 응답에 기능이 없으면 옛 서버(이전 값을 믿지 않음, Astra P0-02 A)
           S.serverPrefs = (pre.settings && pre.settings.prefs) || {};
           const base = Object.assign({}, S.serverPrefs);
           dirty.forEach(k => {
-            const mv = k in out.prefs ? out.prefs[k] : null;
+            // 월 예산은 전송 직전에 서버 기능을 다시 본다: 수정 번호를 비교하지 못하는 서버면 보내지 않고 이 기기에 보관(Astra P0-02 A)
+            if (REV_KEY.test(k) && serverState() !== 'new') { hold[k] = 1; return; }
             // v25 2차: 수정 번호를 가진 공유 값(월 예산)은 내가 고치기 전 값(기준)과 지금 서버 값을 비교해 3방향으로 합친다
             const b0 = REV_KEY.test(k) && S.prefsBase && S.prefsBase[k];
+            // 내 값 = 편집 시작 값에 내가 바꾼 항목만 얹은 값(있으면). 화면 값에는 편집 중 받은 상대 값이 섞여 있을 수 있다(Astra P0-02 B)
+            const mv = b0 && b0.mine !== undefined ? b0.mine : k in out.prefs ? out.prefs[k] : null;
             if (b0) {
               const sv = k in S.serverPrefs ? S.serverPrefs[k] : null, bv = b0.value;
               mine[k] = mv;
+              // 새로 만드는 '그 달만'·'이후 달' 값이 물려받은 기본값(dep)이 편집 사이 바뀌었으면, 그 기본값을 기준·상대 값으로 비교
+              if (bv == null && sv == null && b0.dep && mv != null) {
+                const dsv = S.serverPrefs[b0.dep.key], dbv = coreOf(b0.dep.value) || { total: 0, cats: {} }, dtv = coreOf(dsv) || { total: 0, cats: {} };
+                if (JSON.stringify(dbv) !== JSON.stringify(dtv)) {
+                  const m = merge3(dbv, mv, dtv), theirs = Object.assign({}, dtv, { by: dsv && dsv.by || '', from: b0.dep.key });
+                  if (m.conflicts.length) { found[k] = { key: k, mine: mv, theirs, base: dbv, fields: m.conflicts, reason: 'same', dep: b0.dep.key, keyServer: null }; return; }
+                  if (overBy(m.value)) { found[k] = { key: k, mine: mv, theirs, base: dbv, fields: diffFields(mv, dtv), reason: 'over', over: overBy(m.value), dep: b0.dep.key, keyServer: null }; return; }
+                  base[k] = Object.assign(m.value, { rev: 1 }); prefsBase[k] = 0; return;
+                }
+              }
               if (revOf(sv) !== revOf(bv)) {
                 const m = merge3(bv, mv, sv);
                 if (m.conflicts.length) { found[k] = { key: k, mine: mv, theirs: sv, base: bv, fields: m.conflicts, reason: 'same' }; return; } // 서버 값 그대로 두고 내 값은 충돌 기록에
@@ -179,8 +204,9 @@ const store = (() => {
             if (k in out.prefs) base[k] = out.prefs[k]; else delete base[k];
           });
           out.prefs = base;
+          if (dirty.every(k => hold[k])) delete out.prefs; // 보관만 했으면 prefs는 보내지 않음(옛 서버에 통째로 덮어쓰지 않게)
           // 합친 결과가 서버 한도(2만 자)를 넘으면 서버가 prefs 전체를 비운다 → 보내지 않고 이유를 알린다(Fable v25 P2-2)
-          const size = JSON.stringify(out.prefs).length;
+          const size = out.prefs ? JSON.stringify(out.prefs).length : 0;
           if (size > PREFS_LIMIT) { const e = new Error('공유 설정이 ' + size.toLocaleString('en-US') + '자로 한도(' + PREFS_LIMIT.toLocaleString('en-US') + '자)를 넘어 보내지 않았어요. 예산 → 오래된 월 예산 정리 또는 즐겨찾기를 줄여 주세요'); e.code = 'prefs_too_big'; throw e; }
         }
         const r = await api(Object.keys(prefsBase).length ? { action: 'settings', settings: out, prefsBase } : { action: 'settings', settings: out });
@@ -190,17 +216,30 @@ const store = (() => {
         (r.conflicts || []).forEach(c => {
           const bv = S.prefsBase && S.prefsBase[c.key] ? S.prefsBase[c.key].value : null, mv = mine[c.key], m = merge3(bv, mv, c.server), over = mv != null ? overBy(m.value) : 0;
           if (!m.conflicts.length && !over && revRequeue < 3) { requeue[c.key] = mv; return; }
-          found[c.key] = { key: c.key, mine: mv, theirs: c.server, base: bv, fields: m.conflicts.length ? m.conflicts : diffFields(mv, c.server), reason: m.conflicts.length ? 'same' : 'over', over };
+          // 다시 보내도 계속 경합이면(3번) 고르게 한다: 'race'(합계 초과가 아님, Fable P2-2)
+          found[c.key] = { key: c.key, mine: mv, theirs: c.server, base: bv, fields: m.conflicts.length ? m.conflicts : diffFields(mv, c.server), reason: m.conflicts.length ? 'same' : over ? 'over' : 'race', over };
+        });
+        // 보내는 사이 같은 키를 다시 고쳤으면(대기열 값이 보낸 값과 다름) 그 최신 값을 내 값으로(Fable P2-1: 두 번째 수정 유실 방지)
+        const sentPrefs = JSON.parse(sent).prefs || {};
+        Object.keys(found).forEach(k => {
+          const cur = S.pendingSettings && S.pendingSettings.prefs && k in S.pendingSettings.prefs ? S.pendingSettings.prefs[k] : undefined;
+          if (cur === undefined || JSON.stringify(cur) === JSON.stringify(sentPrefs[k])) return;
+          const pb = S.prefsBase && S.prefsBase[k], f = found[k], nm = pb && pb.mine !== undefined ? pb.mine : cur;
+          const m = merge3(f.base, nm, f.theirs), over = nm != null ? overBy(m.value) : 0;
+          if (!m.conflicts.length && !over && !f.dep) { delete found[k]; requeue[k] = nm; return; } // 고를 것이 없어짐 → 기준 그대로 다시 보냄
+          Object.assign(f, { mine: nm, fields: m.conflicts.length ? m.conflicts : diffFields(nm, f.theirs), reason: m.conflicts.length ? 'same' : over ? 'over' : f.reason, over });
         });
         // 보낸 값이 서버에 저장됐으니 그 키의 기준은 이제 서버 값(보내는 사이 다시 고쳐 대기열이 남아도 내 이전 저장을 상대 수정으로 오인하지 않게). 다시 보낼 키는 원래 기준 유지
-        if (S.prefsBase) Object.keys(S.prefsBase).forEach(k => { if (k in prefsBase || dirty.includes(k)) { if (found[k] || k in requeue) return; const sp = (r.settings && r.settings.prefs) || {}; S.prefsBase[k] = { value: k in sp ? sp[k] : null }; } });
+        if (S.prefsBase) Object.keys(S.prefsBase).forEach(k => { if (k in prefsBase || dirty.includes(k)) { if (found[k] || k in requeue || hold[k]) return; const sp = (r.settings && r.settings.prefs) || {}; const nb = Object.assign({}, S.prefsBase[k], { value: k in sp ? sp[k] : null }); delete nb.dep; S.prefsBase[k] = nb; } });
         if (JSON.stringify(S.pendingSettings) === sent) {
           const keepBase = S.prefsBase; S.settings = normSettings(r.settings); S.pendingSettings = null; S.prefsDirty = null; S.prefsBase = null; S.serverPrefs = r.settings.prefs || null;
-          if (Object.keys(requeue).length) { // 기준(내가 고치기 전 값)은 그대로, 내 값만 다시 대기열에 → 다음 전송의 사전 조회가 지금 서버 값과 3방향으로 합친다
+          const again = Object.assign({}, requeue); Object.keys(hold).forEach(k => { again[k] = sentPrefs[k]; });
+          if (Object.keys(again).length) { // 기준(내가 고치기 전 값)은 그대로, 내 값만 다시 대기열에 → 다음 전송의 사전 조회가 지금 서버 값과 3방향으로 합친다. 보관(hold)한 월 예산도 그대로 대기
             const pp = Object.assign({}, S.settings.prefs);
-            Object.keys(requeue).forEach(k => { if (requeue[k] == null) delete pp[k]; else pp[k] = requeue[k]; });
-            S.pendingSettings = { prefs: pp }; S.prefsDirty = Object.keys(requeue);
-            S.prefsBase = {}; Object.keys(requeue).forEach(k => { S.prefsBase[k] = keepBase && keepBase[k] ? keepBase[k] : { value: null }; });
+            Object.keys(again).forEach(k => { if (again[k] == null) delete pp[k]; else pp[k] = again[k]; });
+            S.pendingSettings = { prefs: pp }; S.prefsDirty = Object.keys(again);
+            S.prefsBase = {}; Object.keys(again).forEach(k => { S.prefsBase[k] = keepBase && keepBase[k] ? keepBase[k] : { value: null }; });
+            S.settings = Object.assign({}, S.settings, { prefs: pp });
           }
         }
         if (Object.keys(requeue).length) { revRequeue++; syncAgain = true; } else revRequeue = 0;
@@ -209,8 +248,14 @@ const store = (() => {
           const tv = found[k].theirs;
           if (S.prefsDirty) S.prefsDirty = S.prefsDirty.filter(x => x !== k);
           if (S.prefsBase) delete S.prefsBase[k];
+          if (found[k].dep) return; // 물려받은 기본값 충돌: 그 키는 서버에 없음 → 화면 값에서 내 새 키만 뺀다
           [S.pendingSettings, S.settings].forEach(o => { if (o && o.prefs) { o.prefs = Object.assign({}, o.prefs); if (tv == null) delete o.prefs[k]; else o.prefs[k] = tv; } });
         });
+        Object.keys(found).forEach(k => { if (found[k].dep) [S.pendingSettings, S.settings].forEach(o => { if (o && o.prefs) { o.prefs = Object.assign({}, o.prefs); delete o.prefs[k]; } }); });
+        // 바꾼 prefs 키가 남지 않았으면 대기열에서 prefs를 뺀다(빈 대기열은 비움, Fable P1)
+        if (S.prefsDirty && !S.prefsDirty.length) S.prefsDirty = null;
+        if (!S.prefsDirty && S.pendingSettings && S.pendingSettings.prefs) { const ps = Object.assign({}, S.pendingSettings); delete ps.prefs; S.pendingSettings = Object.keys(ps).length ? ps : null; }
+        if (Object.keys(hold).length) prefsErr = '공유 예산 ' + Object.keys(hold).length + '건은 서버 업데이트 뒤에 보내요 · 이 기기에 보관 중';
         if (Object.keys(found).length) { S.prefsConflicts = Object.assign({}, S.prefsConflicts, found); emit('conflict', Object.keys(found)); }
         save();
       } catch (e) {
@@ -304,7 +349,15 @@ const store = (() => {
     const dirtyBefore = S.prefsDirty, baseBefore = S.prefsBase;
     S.prefsDirty = [...new Set([...(S.prefsDirty || []), ...Object.keys(patch)])];
     // 수정 번호를 가진 값은 처음 고칠 때의 값(이 기기가 마지막으로 받은 서버 값)을 기준으로 남긴다. 보낼 때 서버 값과 비교
-    Object.keys(patch).forEach(k => { if (REV_KEY.test(k) && !(S.prefsBase && k in S.prefsBase)) S.prefsBase = Object.assign({}, S.prefsBase, { [k]: { value: opts && opts.base && k in opts.base ? opts.base[k] : (k in (S.settings.prefs || {}) ? JSON.parse(JSON.stringify(S.settings.prefs[k])) : null) } }); });
+    Object.keys(patch).forEach(k => {
+      if (!REV_KEY.test(k)) return;
+      if (!(S.prefsBase && k in S.prefsBase)) S.prefsBase = Object.assign({}, S.prefsBase, { [k]: { value: opts && opts.base && k in opts.base ? opts.base[k] : (k in (S.settings.prefs || {}) ? JSON.parse(JSON.stringify(S.settings.prefs[k])) : null) } });
+      // v25 4차: 내가 바꾼 항목만 따로(opts.edit = { from, to }), 새 키가 물려받은 기본값(opts.dep = { key, value })
+      const pb = Object.assign({}, S.prefsBase[k]), ed = opts && opts.edit && opts.edit[k];
+      if (ed) pb.mine = applyEdit(pb.mine !== undefined ? pb.mine : pb.value, ed.from, ed.to); else delete pb.mine;
+      if (opts && opts.dep && opts.dep[k] && pb.value == null && !pb.dep) pb.dep = opts.dep[k];
+      S.prefsBase = Object.assign({}, S.prefsBase, { [k]: pb });
+    });
     if (!saveSettings({ prefs })) { S.prefsDirty = dirtyBefore; S.prefsBase = baseBefore; return false; }
     return true;
   }
@@ -336,7 +389,8 @@ const store = (() => {
     const rest = Object.assign({}, S.prefsConflicts); delete rest[key];
     const before = S.prefsConflicts; S.prefsConflicts = rest;
     if (value === undefined) { if (!save()) { S.prefsConflicts = before; return false; } emit('change'); return true; } // 기기 저장에 실패하면 충돌을 그대로 두고 false
-    if (!setPrefs({ [key]: Object.assign({}, value, { rev: revOf(c.theirs) + 1 }) }, { base: { [key]: c.theirs } })) { S.prefsConflicts = before; return false; }
+    const kb = c.dep ? (c.keyServer || null) : c.theirs; // 물려받은 기본값 충돌이면 그 키의 서버 값(없음)이 기준
+    if (!setPrefs({ [key]: Object.assign({}, value, { rev: revOf(kb) + 1 }) }, { base: { [key]: kb } })) { S.prefsConflicts = before; return false; }
     return true;
   }
   function connect(cfg) { S.cfg = cfg; syncError = ''; save(); emit('change'); sync(); }

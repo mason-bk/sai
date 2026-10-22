@@ -137,7 +137,7 @@
   --text-1: #17211D;
   --text-2: #3D4A42;
   --text-3: #56625A;
-  --divider: #D3D9CF;
+  --divider: #CBD2C8;
   --field-line: #6E7B72;
   --control: #6E7B72;
   --brand: #29583B;
@@ -314,7 +314,7 @@
 @media (min-width: 600px) and (max-width: 840px) {
   :root { --page-gutter: 24px; }
 }
-@media (width > 840px) {
+@media (width >= 840px) {
   :root { --page-gutter: 32px; }
 }
 @media (prefers-contrast: more) {
@@ -1053,7 +1053,7 @@ details.settings-row summary .icon{width:20px;height:20px;color:var(--muted)}
 
 /* ===== v22 레이아웃: 폭 구간 3개(좁음 <600 · 중간 600~840 · 넓음 >840) + safe-area + 키보드 + 금액 맞춤 ===== */
 :root{--safe-t:env(safe-area-inset-top,0px);--safe-b:env(safe-area-inset-bottom,0px);--safe-l:env(safe-area-inset-left,0px);--safe-r:env(safe-area-inset-right,0px);
-  --nav-h:calc(78px + var(--safe-b));--rail-w:0px;--sheet-top:calc(var(--vvt,0px) + var(--safe-t) + 12px)}
+  --nav-h:calc(78px + var(--safe-b));--rail-w:0px;--sheet-top:calc(var(--vvt,0px) + var(--safe-t) + 24px)}
 body{padding:var(--safe-t) var(--safe-r) calc(var(--nav-h) + 28px) var(--safe-l)}
 .wrap{max-width:560px;padding:0 var(--gutter)}
 .results-sticky{margin-inline:calc(-1 * var(--gutter))}.rs-main{padding-inline:var(--gutter)}
@@ -1065,8 +1065,8 @@ nav.tabs{left:var(--safe-l);right:var(--safe-r);max-width:560px}
 /* 시트 안 알림은 머리 아래: 아래 주 버튼·키보드와 겹치지 않게 */
 .toast.in-sheet{top:auto}
 /* 시트: 머리는 상태 막대 아래, 아래 버튼은 홈 막대 위. 키보드가 떠 있으면 홈 막대 여백을 뺀다 */
-#sheet{inset:var(--sheet-top) var(--safe-r) auto var(--safe-l);height:calc(var(--vvh,100dvh) - var(--safe-t) - 12px)}
-#sheet.filter-sheet{inset:calc(var(--vvt,0px) + var(--vvh,100dvh)) var(--safe-r) auto var(--safe-l);max-height:calc(var(--vvh,100dvh) - var(--safe-t) - 12px)}
+#sheet{inset:var(--sheet-top) var(--safe-r) auto var(--safe-l);height:calc(var(--vvh,100dvh) - var(--safe-t) - 24px)}
+#sheet.filter-sheet{inset:calc(var(--vvt,0px) + var(--vvh,100dvh)) var(--safe-r) auto var(--safe-l);max-height:calc(var(--vvh,100dvh) - var(--safe-t) - 24px)}
 .filter-sheet .sheet-b{max-height:none}
 .kbd .sheet-footer{padding-bottom:12px}
 .kbd #sheet.filter-sheet .sheet-b{padding-bottom:var(--s-4)}
@@ -1120,8 +1120,8 @@ nav.tabs button{font-size:.8125rem}
   .analysis>.an-hero{margin-top:0}
 }
 /* ---- 넓음 >840: 옆 메뉴(같은 5개 목적지) + 최대 폭 ---- */
-@media (width > 840px){
-  :root{--rail-w:calc(96px + var(--safe-l));--nav-h:0px}
+@media (width >= 840px){
+  :root{--rail-w:calc(88px + var(--safe-l));--nav-h:0px}
   body{padding:var(--safe-t) var(--safe-r) calc(32px + var(--safe-b)) var(--rail-w)}
   .wrap{max-width:1120px}
   nav.tabs{top:0;bottom:0;left:0;right:auto;width:var(--rail-w);max-width:none;margin:0;display:flex;flex-direction:column;justify-content:center;align-items:stretch;gap:6px;
@@ -1541,7 +1541,7 @@ nav.tabs button[aria-current=page] .icon{stroke-width:2.2}
 nav.tabs .plus{color:var(--text-1);font-weight:700}
 nav.tabs .add-icon{width:52px;height:52px;margin-top:-10px;border:0;outline:0;border-radius:50%;background:var(--text-1);color:var(--bg);box-shadow:0 6px 16px color-mix(in srgb,var(--text-1) 22%,transparent)}
 nav.tabs .add-icon .icon{width:26px;height:26px;stroke-width:2.2}
-@media (width > 840px){nav.tabs{border-right:0;box-shadow:1px 0 0 color-mix(in srgb,var(--text-1) 6%,transparent)}nav.tabs .add-icon{margin-top:0}}
+@media (width >= 840px){nav.tabs{border-right:0;box-shadow:1px 0 0 color-mix(in srgb,var(--text-1) 6%,transparent)}nav.tabs .add-icon{margin-top:0}}
 
 /* ---- 홈: 다가오는 결제 ---- */
 .home-top>.status.warn{margin:0 0 12px}
@@ -2212,14 +2212,14 @@ header.top{min-height:56px}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .chip,:root:not([data-theme="light"]) .mchip:not([aria-pressed=true]):not(.mchip-all),:root:not([data-theme="light"]) .chip-in,:root:not([data-theme="light"]) .seg{box-shadow:inset 0 0 0 1px var(--field-line)}}
 :root[data-theme="dark"] .chip,:root[data-theme="dark"] .mchip:not([aria-pressed=true]):not(.mchip-all),:root[data-theme="dark"] .chip-in,:root[data-theme="dark"] .seg{box-shadow:inset 0 0 0 1px var(--field-line)}
 /* 폭 구간(spec 13절): 좁음 = 한 열 · 중간 600~840 = 가운데 최대 560px 한 열 + 아래 탭 · 넓음 >840 = 옆 메뉴 + 두 칸 */
-@media (min-width:600px) and (max-width:840px){
+@media (min-width:600px) and (width < 840px){
   .wrap{max-width:560px;margin-inline:auto}
   .screen-home #view,.screen-list #view,.screen-recur #view,.screen-settings #view,.screen-analysis #view{display:block}
   .list-side,.list-main,.recur-side,.recur-main,.set-col{display:contents}
   .screen-list .list-side .results-sticky:not(.no-stick){position:sticky;margin:0 calc(-1 * var(--gutter)) 0;border:0;border-block:1px solid var(--line);border-radius:0}
   nav.tabs{padding-inline:max(8px,calc((100% - 560px) / 2))}
 }
-@media (width > 840px){
+@media (width >= 840px){
   .screen-home #view{display:grid;grid-template-columns:400px minmax(0,1fr);column-gap:24px;align-items:start}
   .screen-home #view{grid-template-columns:minmax(0,400px) minmax(0,1fr)}
   .home-top{grid-column:1;grid-row:1}.home-recent{grid-column:2;grid-row:1;margin-top:0}
@@ -2250,6 +2250,55 @@ header.top{min-height:56px}
 .bud-total,.bud-total p,.bud-total .bt-amt{text-align:left}
 .utabs button{border-radius:0}
 .period-opt,.period-opt .po-t,.period-opt .po-t>*{text-align:left}
+/* ===== v25 2차(Astra 디자인 확인 P1·P2, Fable 검토) ===== */
+/* 다크 토큰(spec 11.3): 기본 면 #1D2822 · 보조 면 #29362D · 보조 글자 #AEBDAE · 구분선 #405044. 강조 합계 면은 흰 반전 대신 청구형 짙은 녹색 */
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--surface-1:#1D2822;--surface-2:#29362D;--text-3:#AEBDAE;--divider:#405044;--invert-bg:#1E2E25;--invert-fg:#F1F6EF}}
+:root[data-theme="dark"]{--surface-1:#1D2822;--surface-2:#29362D;--text-3:#AEBDAE;--divider:#405044;--invert-bg:#1E2E25;--invert-fg:#F1F6EF}
+/* 기간 고르기 항목(spec 9.1·11.1): 최소 104px, 안쪽 12px, 의미 있는 태그 12px 이상 */
+.period-opt{min-height:104px;padding:12px;grid-template-columns:minmax(0,1fr) 24px}
+.period-opt .po-tag{font-size:.75rem;line-height:1.25rem}
+/* 내역 필터 4탭·가져오기 열 연결 3탭·확인 목록 3건/쪽: 다른 묶음은 숨김 */
+.lf-body .filter-section{display:none}
+.lft-period #lf-period,.lft-cats #lf-cats,.lft-pay #lf-payers,.lft-pay #lf-methods,.lft-etc #lf-amount,.lft-etc #lf-kind{display:block}
+.lf-body .utabs{position:sticky;top:0;z-index:1;background:var(--surface-1)}
+.mt-sec{display:none}.mapt-cols .mt-cols,.mapt-preview .mt-preview,.mapt-more .mt-more{display:block}
+.import-row.pg-off{display:none}
+/* 기록: 대분류 8개를 4열×2행으로 늘 보임, 금액 칸 64px 이상(휴대폰 숫자 키보드) */
+.cat-pick .cat-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+.cat-pick.open .cat-grid .cat-cell{min-height:56px;height:auto}
+.cat-pick .cat-cell.derived[aria-pressed=true]{background:var(--brand-soft);color:var(--brand-text)}
+.legacy-cats .cat-note{display:block;font-size:.8125rem;color:var(--text-3);margin-bottom:4px}
+.amount-card .amount-in input{min-height:64px;font-size:max(16px,2.375rem)}
+.srv-note{margin-top:0}
+.kp-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:56px;margin-top:12px}
+.kp-toggle small{display:block;font-size:.8125rem;color:var(--text-3)}
+/* 결제자 카드: 긴 이름·큰 금액이면 세로 한 줄씩(글자를 줄이지 않음) */
+.people.one-col{grid-template-columns:1fr}
+.person-amt{overflow-wrap:anywhere}
+/* 충돌 시트 */
+.cf-row{border:0;padding:8px 14px;margin:8px 0}
+.cf-row legend{padding:0;margin-bottom:4px}
+.cf-banner{display:flex;align-items:center;gap:8px;width:100%;border:0;text-align:left;font:inherit;min-height:48px}
+.cf-banner .icon{width:18px;height:18px;flex:none}
+.hero-ahead{font-size:.8125rem;color:var(--ink-2)}
+/* 타이포(spec 11.2): 홈 금액 38/48/700, 분석 합계 28/36/700, 시트 제목 20/28/650, 밑줄 탭 50px */
+.home-hero.h25 .amt{font-weight:700}
+@media (max-width:359px){.home-hero.h25 .amt{font-size:2.125rem;line-height:2.6875rem}}
+.total-row b{font-size:1.75rem;line-height:2.25rem;font-weight:700}
+.sheet-h h2{font-size:1.25rem;line-height:1.75rem;font-weight:650}
+.utabs button{min-height:47px}
+/* 아래 탭 선택은 브랜드색(spec P2-06) */
+nav.tabs button[aria-current=page]{color:var(--brand-text)}
+/* 머리글: 결제자 이니셜 없음(홈에 결제자 요약을 두지 않음, spec 5절) */
+.top-r{gap:4px}
+/* 가져오기 확인 3건/쪽이 한 화면에(390×844 ≤84px): 요약 한 줄, 행 여백 줄임 */
+.import-summary{gap:6px}
+.import-summary>span{display:flex;flex-direction:row;align-items:baseline;justify-content:center;gap:4px;padding:8px 6px;min-height:0}
+.import-summary>span b{display:inline;font-size:1.125rem;line-height:1.5rem}
+.hint.basis{margin:4px 0 2px}
+.import-row{padding-block:8px;min-height:0}
+.import-row .imp-act{margin-top:0}
+@media (max-height:700px){.with-kp .entry-ctx,.with-kp .amount-echo{display:none}}
 </style>
 </head>
 <body>

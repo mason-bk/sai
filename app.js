@@ -11,6 +11,8 @@ const sync = () => store.sync();
 store.on('change', () => render());
 store.on('status', () => renderStatus());
 store.on('notice', msg => toast(msg));
+// 공유 예산 충돌(v25 2차): 다른 기기가 같은 달 예산의 같은 항목을 먼저 고침 → 내 값 / 상대 값을 고르는 시트. 작성 중인 기록이 있으면 알림만
+store.on('conflict', keys => { if ($('#sheet').open && $('[data-form=entry]')) { toast('상대가 먼저 예산을 고쳤어요', '확인', () => openConflict(keys[0])); return; } openConflict(keys[0]); });
 
 /* ---------------- 유틸 ---------------- */
 const $ = s => document.querySelector(s);
@@ -283,7 +285,7 @@ function render() {
   const markup = !store.connected() ? setupView() : !S.me ? whoView() : `<div class="wrap screen-${tab}">
     <header class="top"><div class="brand">${icon('card')}<span>사이</span><span class="brand-sub">PAYDAY</span></div>
       <div class="top-r"><button class="top-budget" data-act="budget" aria-haspopup="dialog" aria-label="생활 예산 보기·수정">예산</button><button class="icon-btn theme-btn" data-act="themetoggle" aria-label="${isDark() ? '라이트' : '다크'} 화면으로 바꾸기">${icon(isDark() ? 'sun' : 'moon')}</button>
-      <button class="who" data-act="tab" data-v="settings" aria-label="${esc(S.me)}로 기록 중. 설정 열기"><span class="avatar-pair" aria-hidden="true">${pairNames().map((n, i) => `<span class="avatar a${i + 1}">${esc(Array.from(n)[0] || '?')}</span>`).join('')}</span></button></div></header>
+      </div></header>
     ${statusRow()}
     <main id="view">${tab === 'home' ? homeView() : tab === 'list' ? listView() : tab === 'analysis' ? analysisView() : tab === 'recur' ? recurView() : settingsView()}</main>
   </div>
@@ -314,6 +316,7 @@ function render() {
     scrollTo(0, Math.max(0, y + shift));
   }
   lastMarkup = markup;
+  refreshStmt();
   renderStatus();
   fitSticky();
   fitRows();
@@ -560,7 +563,8 @@ const mjLabel = id => id === 'all' ? '전체' : core.majorLabel(id) || '전체';
 const netOf = list => list.reduce((s, t) => s + signed(t), 0);
 const selCard = () => v25.card && cardMethods().includes(v25.card) ? v25.card : '';
 const billMethods = () => selCard() ? [selCard()] : cardMethods();
-const cardLabel = () => selCard() || (cardMethods().length === 1 ? cardMethods()[0] : '카드 ' + cardMethods().length + '개');
+// 카드: 모든 카드가 공통 이용 기간·결제일을 쓰는 '기존 카드 묶음'. 결제수단 하나를 고르면 그 '결제수단 필터'(카드별 결제일은 다음 단계, Astra P1-02)
+const cardLabel = () => selCard() ? selCard() + ' 결제수단만' : '기존 카드 묶음';
 const fd = core.fullDate;
 function autoOffset() { const pd = cardPrefs().payDay; return pd ? core.billCycle(S.settings.cycle_start_day, pd, new Date()).offset : 0; }
 // 손대지 않은 카드 청구 기간은 결제일 설정이 바뀌거나 앱으로 돌아올 때 다시 '가장 가까운 결제'로
@@ -654,12 +658,13 @@ function homeView() {
     hero = `<section class="card hero home-hero h25 bill" data-ui-key="hero" aria-label="장부 기준 카드값${mj === 'all' ? '' : ', ' + mjLabel(mj) + '만'}">
       <div class="hero-top"><p class="eyebrow">${mj === 'all' ? '장부 기준 카드값' : esc(mjLabel(mj)) + ' · 청구 중 일부'}</p><span class="dday num" aria-label="${p.days < 0 ? -p.days + '일 지났어요' : p.days === 0 ? '결제일이 오늘이에요' : '결제일까지 ' + p.days + '일'}">${dd}</span></div>
       ${amt(net)}
-      <div class="hero-meta"><span class="hm-t">${mj === 'all' ? `${esc(cardLabel())} · ${list.length}건` : `카드 전체 <span class="num">${won(allNet)}원</span>`}</span><button class="hero-link" data-act="cardpick" aria-haspopup="dialog">카드 변경</button></div>
+      <div class="hero-meta"><span class="hm-t">${mj === 'all' ? `${esc(cardLabel())} · ${list.length}건` : `${esc(cardLabel())} 전체 <span class="num">${won(allNet)}원</span>`}</span><button class="hero-link" data-act="cardpick" aria-haspopup="dialog">카드 변경</button></div>
       <button class="hero-cta" data-act="stmt" aria-haspopup="dialog"><span>명세서 맞추기</span>${icon('right')}</button></section>`;
   } else {
     const cmp = core.monthCompare(moff, new Date()), c = core.compareNet(core.scopeTxs(liveTxs(), { range: null, methods: null, major: mj, map: catMap() }), cmp);
+    const ahead = cmp.partial ? net - c.cur : 0; // 오늘 뒤 날짜로 적은 기록(큰 숫자에는 들어가고 비교에서는 빠짐, Fable P2-6)
     const line = cmp.future ? '아직 오지 않은 달이에요' : !c.hasPrev ? '지난달 비교 기록이 없어요'
-      : `지난달${cmp.partial ? ' 같은 날까지' : ''}보다 <b class="num">${won(Math.abs(c.diff))}원</b> ${c.diff > 0 ? '더 썼어요' : c.diff < 0 ? '덜 썼어요' : '같아요'}`;
+      : `지난달${cmp.partial ? ' 같은 날까지' : ''}보다 <b class="num">${won(Math.abs(c.diff))}원</b> ${c.diff > 0 ? '더 썼어요' : c.diff < 0 ? '덜 썼어요' : '같아요'}${ahead ? ` <span class="hero-ahead">(오늘 뒤 날짜 ${won(ahead)}원 제외)</span>` : ''}`;
     const rng = cmp.partial ? `${md(cmp.cur.start)}~${md(cmp.cur.end)} ↔ ${md(cmp.prev.start)}~${md(cmp.prev.end)}` : `${p.month}월 전체 ↔ ${parseDate(cmp.prev.start).getMonth() + 1}월 전체`;
     hero = `<section class="card hero home-hero h25 month" data-ui-key="hero" aria-label="${p.month}월 쓴 돈${mj === 'all' ? '' : ', ' + mjLabel(mj) + '만'}">
       <div class="hero-top"><p class="eyebrow">${mj === 'all' ? (p.off === 0 ? '이 달 쓴 돈' : p.month + '월 쓴 돈') : esc(mjLabel(mj)) + '에 쓴 돈'}</p><span class="hero-sub">모든 결제수단</span></div>
@@ -674,7 +679,7 @@ function homeView() {
     const after = !p.closed ? 0 : core.scopeTxs(liveTxs(), { range: billPeriod(0), methods: ms }).length, refunds = liveTxs().filter(t => t.refund_pending).length;
     body = `<div class="home-info" data-ui-key="home-info"><p>${fd(p.start)} ~ ${fd(p.end)} 이용분${p.pay ? ' · ' + longDate(p.pay) + ' 결제' : ''}<br><span class="muted">카드 결제수단만 더해요(현금·계좌이체 제외). 할부·취소·수수료·늦은 매입은 명세서와 다를 수 있어요.</span></p>
       <button class="link" data-act="cardpick">${esc(cardLabel())} · 카드 바꾸기${icon('right')}</button>
-      ${after && p.off === offset && offset < 0 ? `<button class="link after-close" data-act="nextbill" data-ui-key="after-close">마감 뒤 기록 ${after}건 · 다음 청구${icon('right')}</button>` : ''}
+      ${after && p.off === offset && offset === -1 ? `<button class="link after-close" data-act="nextbill" data-ui-key="after-close">마감 뒤 기록 ${after}건 · 다음 청구${icon('right')}</button>` : ''}
       ${refunds ? `<button class="link" data-act="refunds">환불 대기 ${refunds}건 · 전체 기간${icon('right')}</button>` : ''}</div>`;
   } else if (ht === 'cats') {
     const g = groupSum(list.filter(t => t.type !== 'transfer'), t => majorOfTx(t)), denom = g.filter(e => e[1] > 0).reduce((a, e) => a + e[1], 0);
@@ -708,11 +713,11 @@ function budgetRow() {
   const bs = budgetState();
   if (bs.basis !== 'month') {
     const c = cycleRange(0), spent = netOf(core.scopeTxs(liveTxs(), { range: c })), t = bs.legacy.total || 0, rest = t - spent;
-    return `<button class="budget-row" data-act="budget" data-ui-key="budget-row"><span class="br-t"><b>기존 주기 예산 · ${md(c.start)}~${md(c.end)}</b><small>${t ? (rest < 0 ? `<span class="over-t">${won(-rest)}원 초과</span>` : `${won(rest)}원 남음`) : '분류 예산만 있어요'}${bs.basis === 'choose' ? ' · 월 예산으로 바꿀 수 있어요' : ''}</small></span><span class="br-act">보기·수정${icon('right')}</span></button>`;
+    return `<button class="budget-row" data-act="budget" data-ui-key="budget-row"><span class="br-t"><b>기존 주기 예산 · ${md(c.start)}~${md(c.end)}</b><small>${t ? (rest < 0 ? `<span class="over-t">${wonWbr(-rest)} 초과</span>` : `${wonWbr(rest)} 남음`) : '분류 예산만 있어요'}${bs.basis === 'choose' ? ' · 월 예산으로 바꿀 수 있어요' : ''}</small></span><span class="br-act">보기·수정${icon('right')}</span></button>`;
   }
   const r = pv() === 'month' ? monthPeriod(moff) : monthPeriod(0), b = core.budgetFor(bs.p, r.ym), spent = monthSpent(r), rest = b.total - spent;
-  const sub = b.total ? (rest < 0 ? `<span class="over-t">${won(-rest)}원 초과</span>` : `${won(rest)}원 남음`) : Object.keys(b.cats).length ? '전체 한도 미설정 · 대분류 예산만' : '예산을 정해 보세요';
-  return `<button class="budget-row" data-act="budget" data-ui-key="budget-row" aria-label="${r.month}월 생활 예산, 1일부터 말일, ${b.total ? (rest < 0 ? won(-rest) + '원 초과' : won(rest) + '원 남음') : '미설정'}. 보기·수정"><span class="br-t"><b>${r.month}월 생활 예산 · 1일~말일</b><small>${sub}</small></span><span class="br-act">보기·수정${icon('right')}</span></button>`;
+  const sub = b.total ? (rest < 0 ? `<span class="over-t">${wonWbr(-rest)} 초과</span>` : `${wonWbr(rest)} 남음`) : Object.keys(b.cats).length ? '전체 한도 미설정 · 대분류 예산만' : '예산을 정해 보세요';
+  return `<button class="budget-row" data-act="budget" data-ui-key="budget-row" aria-label="${r.month}월 생활 예산, 1일부터 말일, ${b.total ? (rest < 0 ? won(-rest) + '원 초과' : won(rest) + '원 남음') : '미설정'}. 보기·수정"><span class="br-t"><b>${r.month}월 ${curMajor() !== 'all' ? '전체 ' : ''}생활 예산 · 1일~말일</b><small>${sub}</small></span><span class="br-act">보기·수정${icon('right')}</span></button>`;
 }
 
 /* ---------------- 기간 고르기 시트: 3개/쪽, 이전 연도 찾기 (spec 9절) ---------------- */
@@ -742,9 +747,9 @@ function findPeriod(ym) {
 // 카드 변경: 카드 전체(기존 카드 묶음) 또는 결제수단 하나. 모든 카드가 같은 이용 기간·결제일을 쓴다(카드별 결제일은 다음 단계)
 function openCardSheet() {
   const ms = cardMethods(), cur = selCard();
-  showSheet(`<div class="sheet-wrap">${sheetHead('청구 카드 고르기')}
-    <div class="sheet-b"><div class="period-opts">${[['', '카드 전체', `결제수단 ${ms.length}개${ms.length ? ' · ' + esc(ms.join(', ')) : ''}`], ...ms.map(m => [m, m, '이 결제수단의 기록만'])].map(([v, t, s]) => `<button class="period-opt" data-act="cardset" data-v="${esc(v)}" aria-pressed="${v === cur}"><span class="po-t"><b>${esc(t)}</b><small>${s}</small></span><span class="po-c" aria-hidden="true">${v === cur ? icon('check') : ''}</span></button>`).join('')}</div>
-      <p class="hint">모든 카드가 같은 이용 기간(매월 ${S.settings.cycle_start_day}일 시작)${cardPrefs().payDay ? `과 결제일(매월 ${cardPrefs().payDay}일)` : ''}로 계산돼요. 고른 카드는 이 기기에만 기억해요.</p></div>
+  showSheet(`<div class="sheet-wrap">${sheetHead('청구 카드·결제수단')}
+    <div class="sheet-b"><p class="hint">모든 카드가 공통 이용 기간(매월 ${S.settings.cycle_start_day}일 시작)${cardPrefs().payDay ? `과 결제일(매월 ${cardPrefs().payDay}일)` : ''}을 쓰는 기존 카드 묶음이에요. 카드마다 다른 결제일은 아직 지원하지 않아요.</p><div class="period-opts">${[['', '기존 카드 묶음', `카드 결제수단 ${ms.length}개${ms.length ? ' · ' + esc(ms.join(', ')) : ''} · 공통 이용 기간·결제일`], ...ms.map(m => [m, '결제수단 필터 · ' + m, '이 결제수단의 기록만, 같은 이용 기간·결제일'])].map(([v, t, s]) => `<button class="period-opt" data-act="cardset" data-v="${esc(v)}" aria-pressed="${v === cur}"><span class="po-t"><b>${esc(t)}</b><small>${s}</small></span><span class="po-c" aria-hidden="true">${v === cur ? icon('check') : ''}</span></button>`).join('')}</div>
+      <p class="hint">고른 것은 이 기기에만 기억해요.</p></div>
     <div class="sheet-footer"><button type="button" class="btn ghost" data-act="setpay">카드 결제일·결제수단 설정</button></div></div>`, true);
 }
 function openCatSheet() {
@@ -783,30 +788,31 @@ function anTrend() {
   const opts = [['period', month ? '월별' : '청구별'], ['pace', '누적'], ['week', '주별'], ['day', '일별']];
   const seg = `<div class="seg seg4 an-sub" role="group" aria-label="추이 단위">${opts.map(([k, l]) => `<button data-act="ansub" data-v="trend:${k}" aria-pressed="${sub === k}">${l}</button>`).join('')}</div>`;
   const pick = r => core.filterTxs(core.scopeTxs(liveTxs(), { range: r, methods: month ? null : billMethods(), major: curMajor(), map: catMap() }), lf, null);
-  const td = today();
+  const td = today(), anchor = (() => { const r = listRange(); return r && r.end < td ? r.end : td; })(); // 주별·일별은 보던 기간의 끝(오늘보다 앞이면 그날) 기준(Astra P1-05)
   if (sub === 'pace') {
     const p = curPeriod(), pp = month ? monthPeriod(moff - 1) : billPeriod(offset - 1), running = td >= p.start && td <= p.end;
     return seg + paceChart(p, pp, pick(p), pick(pp), running ? dayDiff(p.start, td) + 1 : dayDiff(p.start, p.end) + 1, month ? ['이 달', '지난달'] : ['이 청구', '지난 청구']);
   }
   let periods;
   if (sub === 'period') periods = Array.from({ length: 6 }, (_, i) => { const off = curOff() - 5 + i, p = month ? monthPeriod(off) : billPeriod(off), t = periodTitle(p); return { start: p.start, end: p.end, x: month ? p.month + '월' : md(p.start), title: t.title + ' (' + fd(p.start) + ' ~ ' + fd(p.end) + ')' }; });
-  else if (sub === 'week') { const mon = addDays(td, -((parseDate(td).getDay() + 6) % 7)); periods = Array.from({ length: 8 }, (_, i) => { const s = addDays(mon, -7 * (7 - i)); return { start: s, end: addDays(s, 6), x: md(s), title: fd(s) + ' ~ ' + fd(addDays(s, 6)) }; }); }
-  else periods = Array.from({ length: 14 }, (_, i) => { const d = addDays(td, i - 13); return { start: d, end: d, x: md(d), title: fd(d) + ' ' + WEEK[parseDate(d).getDay()] }; });
+  else if (sub === 'week') { const mon = addDays(anchor, -((parseDate(anchor).getDay() + 6) % 7)); periods = Array.from({ length: 8 }, (_, i) => { const s = addDays(mon, -7 * (7 - i)); return { start: s, end: addDays(s, 6), x: md(s), title: fd(s) + ' ~ ' + fd(addDays(s, 6)) }; }); }
+  else periods = Array.from({ length: 14 }, (_, i) => { const d = addDays(anchor, i - 13); return { start: d, end: d, x: md(d), title: fd(d) + ' ' + WEEK[parseDate(d).getDay()] }; });
   periods.forEach(p => { p.v = netOf(pick(p)); p.run = td >= p.start && td <= p.end && p.start !== p.end; p.sel = sub === 'period' && p.start === curPeriod().start; });
-  return seg + barChart(periods, sub === 'period' ? (month ? '월별 순지출' : '청구별 장부 기준 카드값') : sub === 'week' ? '주별 순지출 · 월~일' : '일별 순지출');
+  const until = anchor === td ? '오늘' : fd(anchor);
+  return seg + barChart(periods, sub === 'period' ? (month ? '월별 순지출' : cardPrefs().payDay ? '청구별 장부 기준 카드값' : '이용 주기별 카드 기록') : sub === 'week' ? `주별 순지출 · ${until}까지 8주` : `일별 순지출 · ${until}까지 14일`);
 }
 
 /* ---------------- 결제자별 합계(내역 → 결제자, 분석 → 결제자): 정산액이 아니다 (spec 5절) ---------------- */
 function payerBlock(txs) {
   const by = {}, cnt = {};
-  txs.forEach(t => { if (t.type === 'transfer') return; const p = t.payer || '공동'; by[p] = (by[p] || 0) + signed(t); cnt[p] = (cnt[p] || 0) + 1; });
+  txs.forEach(t => { if (t.type === 'transfer') return; const p = t.payer || '미지정'; by[p] = (by[p] || 0) + signed(t); cnt[p] = (cnt[p] || 0) + 1; });
   const order = [...payerList(), ...Object.keys(by)].filter((p, i, a) => a.indexOf(p) === i && p in by);
   const shares = core.payerShares(order.map(p => [p, by[p]])), total = shares.reduce((a, x) => a + x.amount, 0);
   const pg = core.pageOf(shares.length, payerPage, 2); payerPage = pg.page;
   const p = curPeriod(), t = periodTitle(p), rangeName = lf.period === 'cycle' ? t.title : lf.period === 'all' ? '전체 기간' : '지정 기간';
   return `<div class="payer-block" data-ui-key="payer-block"><h2 class="payer-h">결제자별 합계</h2>
     <p class="hint payer-note">${esc(rangeName)} · ${esc(mjLabel(curMajor()))}${pv() === 'bill' ? ' · ' + esc(cardLabel()) : ''}<br>실제로 결제한 금액이에요. 서로 갚을 정산액은 아니에요.</p>
-    ${shares.length ? `<div class="people">${shares.slice(pg.from, pg.to).map(x => `<section class="person card" aria-label="${esc(x.name)} 결제 ${x.amount < 0 ? '순환불 ' + won(-x.amount) : won(x.amount)}원${total > 0 && x.amount > 0 ? ', ' + x.pct + '%' : ''}">
+    ${shares.length ? `<div class="people${shares.some(x => won(Math.abs(x.amount)).length > 9 || Array.from(x.name).length > 6) ? ' one-col' : ''}">${shares.slice(pg.from, pg.to).map(x => `<section class="person card" aria-label="${esc(x.name)} 결제 ${x.amount < 0 ? '순환불 ' + won(-x.amount) : won(x.amount)}원${total > 0 && x.amount > 0 ? ', ' + x.pct + '%' : ''}">
       <div class="person-top"><b>${esc(x.name)}</b>${total > 0 && x.amount > 0 ? `<span class="badge num">${x.pct}%</span>` : ''}</div>
       <p class="person-amt num">${x.amount < 0 ? '순환불 ' + won(-x.amount) : won(x.amount)}원</p>
       <div class="person-foot"><span>${cnt[x.name] || 0}건 결제</span><button class="link" data-act="payerlist" data-v="${esc(x.name)}">기록 보기${icon('right')}</button></div></section>`).join('')}</div>${pager('payerpage', pg, '명')}`
@@ -824,7 +830,7 @@ function openStatement() {
   const memo = (S.stmt || {})[stmtKey]; stmtText = memo && Number.isSafeInteger(memo.v) ? won(memo.v) : '';
   showSheet(`<div class="sheet-wrap">${sheetHead('명세서 맞추기')}
     <div class="sheet-b">
-      <div class="stmt-ctx"><span class="sc-card">${esc(cardLabel())}</span><span>${esc(p.pay ? t.title : '결제일 미설정')}</span><span class="num">${fd(p.start)} ~ ${fd(p.end)} 이용분</span><b class="num">장부 기준 ${won(ledger)}원</b><small>${n}건 · 분류 필터와 관계없이 카드 전체</small></div>
+      <div class="stmt-ctx"><span class="sc-card">${esc(cardLabel())} · 공통 이용 기간·결제일</span><span>${esc(p.pay ? t.title : '결제일 미설정')}</span><span class="num">${fd(p.start)} ~ ${fd(p.end)} 이용분</span><b class="num">장부 기준 ${won(ledger)}원</b><small>${n}건 · 분류 필터와 관계없이 카드 전체</small></div>
       <div class="field"><label for="stmt-amount">명세서 청구 금액 (원)</label>
         <div class="amount-in"><input id="stmt-amount" data-money data-input="stmt" inputmode="numeric" autocomplete="off" placeholder="예: ${won(ledger || 765000)}" value="${esc(stmtText)}" class="num" aria-describedby="stmt-err stmt-res"><span>원</span></div>
         <p class="amount-echo num" aria-live="polite"></p>
@@ -832,7 +838,7 @@ function openStatement() {
         <p class="stmt-res" id="stmt-res" role="status">${stmtResult(ledger)}</p></div>
       <div class="utabs stmt-tools" role="group" aria-label="다음 행동"><button type="button" data-act="billlist">청구 기록</button><button type="button" data-act="impopen" data-v="file">파일 대조</button><button type="button" data-act="impopen" data-v="paste">알림 입력</button></div>
       <p class="hint">할부·취소·수수료·매입 시점은 명세서와 다를 수 있어요. 입력 금액은 이 카드·이 청구에만, 이 기기에만 기억해요.</p>
-    </div></div>`);
+    </div></div>`, true);
 }
 function stmtResult(ledger) {
   const r = core.parseClaimWon(stmtText);
@@ -843,6 +849,12 @@ function stmtResult(ledger) {
   return d.kind === 'match' ? `${icon('check')}<span><b>명세서와 딱 맞아요.</b> ${pend ? '공유 대기 중인 기록이 있어 아직 확정 전이에요.' : '입력한 청구 금액과 장부 금액이 같아요.'}${changed}${tail}</span>`
     : d.kind === 'missing' ? `${icon('alert')}<span><b>장부가 ${won(d.abs)}원 적어요.</b> 빠진 기록이나 수수료가 있을 수 있어요. 아래에서 이용내역과 대조해 보세요.${changed}${tail}</span>`
     : `${icon('alert')}<span><b>장부가 ${won(d.abs)}원 많아요.</b> 취소·중복 기록이나 다른 청구에 들어갈 기록이 섞였을 수 있어요.${changed}${tail}</span>`;
+}
+// 명세서 시트가 열린 동안 장부가 바뀌면(동기화·다른 기기) 장부 금액·결과를 다시 계산(Fable P2-3)
+function refreshStmt() {
+  const b = $('#sheet[open] .stmt-ctx b'); if (!b) return;
+  const ledger = stmtLedger(), t = '장부 기준 ' + won(ledger) + '원';
+  if (b.textContent !== t) { b.textContent = t; const r = $('#stmt-res'); if (r) r.innerHTML = stmtResult(ledger); }
 }
 function saveStmtMemo(ledger) {
   const r = core.parseClaimWon(stmtText), all = Object.assign({}, S.stmt || {});
@@ -909,8 +921,8 @@ function openBudget(fresh) {
   if (!store.prefs()) { toast('서버 업데이트가 필요해요 (Apps Script 새 버전)'); return; }
   if (fresh || !bud.ym) bud = { ym: pv() === 'month' ? monthPeriod(moff).ym : core.monthRange(0).ym, tab: 'total', page: 0, field: '' };
   const bs = budgetState();
-  if (bs.basis === 'choose') return showSheet(budgetChooseHtml(bs));
-  if (bs.basis === 'legacy') return showSheet(budgetLegacyHtml(bs));
+  if (bs.basis === 'choose') return showSheet(budgetChooseHtml(bs), true);
+  if (bs.basis === 'legacy') return showSheet(budgetLegacyHtml(bs), true);
   const r = core.monthOf(bud.ym), b = core.budgetFor(bs.p, bud.ym), spent = monthSpent(r), chk = core.budgetCheck(b), now = core.monthRange(0).ym;
   const nav = `<div class="period-nav bud-nav" data-ui-key="bud-nav"><button class="pn-btn" data-act="bmon" data-v="-1" aria-label="이전 달 예산">${icon('left')}</button>
     <div class="period-lbl static"><b><span>${r.year}년 ${r.month}월</span></b><small class="num">${fd(r.start)} ~ ${fd(r.end)}</small></div>
@@ -933,12 +945,15 @@ function openBudget(fresh) {
         <p class="bt-src">${src}</p></section>
       <p class="notice-soft">모든 결제수단의 이용일 기준이에요. 카드 청구 주기와 별도로 관리해요.</p>
       <div class="card list-card"><button class="settings-row" data-act="btab" data-v="cat"><span><b>대분류 예산 보기</b><small>식비·생활 등 8개 · 합계 <span class="num">${won(chk.allocated)}원</span>${b.total ? ' · 미배정 <span class="num">' + won(chk.unassigned) + '원</span>' : ''}</small></span>${icon('right')}</button>
+        ${oldMonthKeys().length ? `<button class="settings-row" data-act="bcleanup"><span><b>오래된 월 예산 ${oldMonthKeys().length}개 정리</b><small>24개월 지난 '그 달만' 예산을 지워 공유 설정 공간을 비워요</small></span>${icon('right')}</button>` : ''}
         ${bs.legacy ? `<button class="settings-row" data-act="blegacy"><span><b>이전 주기 예산</b><small>전환 시점에 보관한 기존 설정 · 매월 ${S.settings.cycle_start_day}일 시작</small></span>${icon('right')}</button>` : ''}</div>`;
     foot = `<button type="button" class="btn" data-act="bedit" data-v="total">${b.total ? '전체 예산 수정' : '전체 예산 정하기'}</button>`;
   }
+  const cf = Object.keys(store.conflicts());
+  const banner = cf.length ? `<button class="notice-soft warn cf-banner" data-act="cfopen" data-v="${esc(cf[0])}">${icon('alert')}<span>상대가 먼저 고친 예산 ${cf.length}건 · 내 값과 비교해 골라 주세요</span></button>` : '';
   showSheet(`<div class="sheet-wrap">${sheetHead('생활 예산')}
-    <div class="sheet-b">${nav}${tabsU('btab', [['total', '전체 예산'], ['cat', '대분류 예산']], bud.tab, '예산 보기')}${body}</div>
-    <div class="sheet-footer">${foot}</div></div>`);
+    <div class="sheet-b">${banner}${nav}${tabsU('btab', [['total', '전체 예산'], ['cat', '대분류 예산']], bud.tab, '예산 보기')}${body}</div>
+    <div class="sheet-footer">${foot}</div></div>`, true);
 }
 // 한 항목 수정: 금액 하나 + 적용 범위(이 달만 / 이후 달에도) + 취소·저장. 참고 금액(지난달 쓴 돈)은 입력 아래 본문으로(spec 9절)
 function budgetEditHtml(field, err, text, scope) {
@@ -956,12 +971,22 @@ function budgetEditHtml(field, err, text, scope) {
       <fieldset class="field bud-scope"><legend class="lab">적용 범위</legend>
         <label class="radio-row"><input type="radio" name="scope" value="month" ${scope !== 'future' ? 'checked' : ''}><span>${ml}만</span></label>
         <label class="radio-row"><input type="radio" name="scope" value="future" ${scope === 'future' ? 'checked' : ''}><span>${ml}부터 이후 달에도 적용</span></label>
-        <p class="hint">이전 달 예산은 바뀌지 않아요. 이후 달에 따로 정한 예산도 그대로예요.</p></fieldset>
+        <p class="hint">이전 달 예산은 바뀌지 않아요. 이후 달에 따로 정한 예산도 그대로예요.</p>
+        <p class="hint bud-future" id="bud-future">${futureBaseText(field)}</p></fieldset>
       <div class="err" id="budget-err" role="alert">${esc(err || '')}</div>
     </div>
     <div class="sheet-footer two"><button type="button" class="btn ghost" data-act="budget">취소</button><button class="btn save" type="submit">예산 저장</button></div></form>`;
 }
-function openBudgetEdit(field) { bud.field = field; showSheet(budgetEditHtml(field)); const a = $('#sheet [name=amount]'); if (a) a.focus({ preventScroll: true }); }
+// '이후 달에도'의 바탕 미리보기(Fable P2-1): 그 달에 적용되던 기본값(그 달만 정한 값은 바탕이 아님)에서 이 항목만 바뀐다
+function futureBaseText(field) {
+  const p = budgetPrefs(), tk = Object.keys(p).filter(k => k.startsWith('bt:') && core.validYm(k.slice(3)) && k.slice(3) <= bud.ym && p[k]).sort().pop();
+  const name = field === 'total' ? '전체' : core.majorLabel(field);
+  if (!tk) return `이후 달에도를 고르면: 기본값이 아직 없어 ${name} 예산만 이후 달에 적용돼요(다른 항목은 미설정).`;
+  const b = core.budgetFor({ [tk]: p[tk] }, bud.ym), from = core.monthOf(tk.slice(3)), cur = field === 'total' ? b.total : b.cats[field] || 0;
+  return `이후 달에도를 고르면: ${from.year}년 ${from.month}월부터 쓰던 기본값(전체 ${b.total ? man(b.total) + '원' : '미설정'} · ${name} ${cur ? man(cur) + '원' : '미설정'})에서 ${name}만 바뀌어요. 그 달만 따로 정한 값은 바탕이 아니에요.`;
+}
+const oldMonthKeys = () => { const cut = core.addMonths(core.monthRange(0).ym, -24); return Object.keys(budgetPrefs()).filter(k => k.startsWith('bm:') && core.validYm(k.slice(3)) && k.slice(3) < cut); };
+function openBudgetEdit(field) { bud.field = field; showSheet(budgetEditHtml(field), true); const a = $('#sheet [name=amount]'); if (a) a.focus({ preventScroll: true }); }
 function saveBudget(f) {
   const fd2 = new FormData(f), text = String(fd2.get('amount') || ''), scope = fd2.get('scope') === 'future' ? 'future' : 'month';
   const r = core.parseBudgetWon(text), field = bud.field;
@@ -1014,7 +1039,7 @@ function openLegacyBudgetForm() {
       <div class="field"><label for="b-total">한 주기 전체 예산</label><div class="amount-in"><input id="b-total" name="total" data-money inputmode="numeric" autocomplete="off" placeholder="미설정" value="${b.total ? won(b.total) : ''}" class="num"><span>원</span></div><p class="amount-echo num" aria-live="polite"></p></div>
       <div class="card">${cats.map((c, i) => `<label class="budget-cat" for="bc${i}"><span>${categoryIcon(c)}${esc(c)}</span><span class="budget-in"><input id="bc${i}" name="cat:${esc(c)}" data-money inputmode="numeric" autocomplete="off" placeholder="-" value="${b.cats && b.cats[c] ? won(b.cats[c]) : ''}" class="num"><span>원</span></span></label>`).join('')}</div>
     </div>
-    <div class="sheet-footer"><div class="err" id="budget-err" role="alert"></div><button class="btn save" type="submit">저장</button></div></form>`);
+    <div class="sheet-footer"><div class="err" id="budget-err" role="alert"></div><button class="btn save" type="submit">저장</button></div></form>`, true);
 }
 function saveLegacyBudget(f) {
   const fd2 = new FormData(f); let bad = '';
@@ -1024,6 +1049,38 @@ function saveLegacyBudget(f) {
   if (bad) { $('#budget-err').textContent = bad; return; }
   if (!store.setPrefs({ budget: { total, cats } })) { $('#budget-err').textContent = '저장하지 못했어요. 다시 눌러 주세요'; return; }
   openBudget(); savedToast('예산을 저장했어요');
+}
+
+/* ---------------- 예산 충돌: 상대가 먼저 고쳤어요 (spec 6.3, Astra P0-02) ----------------
+ * 내 값은 충돌 기록(store.conflicts)에 그대로 남아 있다(초안 보존). 항목마다 내 값/상대 값을 고르면 상대 값을 기준으로 다시 저장 */
+const fieldName = f => f === 'total' ? '전체 예산' : f.startsWith('cats.') ? core.majorLabel(f.slice(5)) + ' 예산' : f;
+const fieldVal = (v, f) => { if (!v) return 0; if (f === 'total') return Number(v.total) || 0; return Number((v.cats || {})[f.slice(5)]) || 0; };
+function openConflict(key) {
+  const c = store.conflicts()[key]; if (!c) { const k = Object.keys(store.conflicts())[0]; if (k) return openConflict(k); return; }
+  const ym = key.slice(3), r = core.monthOf(ym), what = key.startsWith('bt:') ? `${r.year}년 ${r.month}월부터 이후 기본값` : `${r.year}년 ${r.month}월 예산`;
+  const auto = store.merge3(c.base, c.mine, c.theirs).value, others = Object.keys(store.conflicts()).length - 1;
+  showSheet(`<div class="sheet-wrap" data-conflict="${esc(key)}">${sheetHead('상대가 먼저 고쳤어요')}
+    <div class="sheet-b"><p class="hint">${esc(what)}을 다른 기기에서 먼저 바꿨어요${c.theirs && c.theirs.by ? '(' + esc(c.theirs.by) + ')' : ''}. 같은 항목만 골라 주세요. 다른 항목은 두 사람 것을 합쳤어요. 내 입력은 고를 때까지 이 기기에 남아 있어요.</p>
+      ${c.fields.map((f, i) => `<fieldset class="card cf-row"><legend class="lab">${esc(fieldName(f))}</legend>
+        <label class="radio-row"><input type="radio" name="cf${i}" value="mine" checked><span>내 값 <b class="num">${fieldVal(c.mine, f) ? won(fieldVal(c.mine, f)) + '원' : '미설정'}</b></span></label>
+        <label class="radio-row"><input type="radio" name="cf${i}" value="theirs"><span>상대가 바꾼 값 <b class="num">${fieldVal(c.theirs, f) ? won(fieldVal(c.theirs, f)) + '원' : '미설정'}</b></span></label></fieldset>`).join('')}
+      <div class="err" id="cf-err" role="alert"></div>${others ? `<p class="hint">확인할 충돌이 ${others}건 더 있어요.</p>` : ''}</div>
+    <div class="sheet-footer two"><button type="button" class="btn ghost" data-act="cfkeep">상대 값 그대로</button><button type="button" class="btn" data-act="cfsave">고른 값으로 저장</button></div></div>`, true);
+}
+function saveConflict(keepTheirs) {
+  const key = ($('#sheet [data-conflict]') || {}).dataset ? $('#sheet [data-conflict]').dataset.conflict : ''; const c = store.conflicts()[key]; if (!c) return;
+  if (keepTheirs) { store.resolveConflict(key); }
+  else {
+    const v = JSON.parse(JSON.stringify(store.merge3(c.base, c.mine, c.theirs).value)); v.cats = v.cats || {};
+    c.fields.forEach((f, i) => { const pickMine = ($(`#sheet [name=cf${i}]:checked`) || {}).value !== 'theirs', src = pickMine ? c.mine : c.theirs, n = fieldVal(src, f);
+      if (f === 'total') v.total = n; else if (n) v.cats[f.slice(5)] = n; else delete v.cats[f.slice(5)]; });
+    const chk = core.budgetCheck({ total: Number(v.total) || 0, cats: v.cats });
+    if (!chk.ok) { $('#cf-err').textContent = `고른 값으로는 대분류 합계가 전체 예산보다 ${won(chk.short)}원 커요. 다른 쪽을 골라 주세요`; return; }
+    v.by = S.me || ''; v.at = Date.now();
+    if (!store.resolveConflict(key, v)) { $('#cf-err').textContent = '저장하지 못했어요. 다시 눌러 주세요'; return; }
+  }
+  const next = Object.keys(store.conflicts())[0];
+  if (next) openConflict(next); else { $('#sheet').close(); savedToast(keepTheirs ? '상대 값을 그대로 뒀어요' : '고른 값으로 저장했어요'); }
 }
 
 /* ---------------- 대분류 연결 (spec 7.2): 확인 필요 / 연결됨, 4개/쪽, 새 기록만 / 과거 N건도 ---------------- */
@@ -1036,7 +1093,7 @@ function openMapping() {
     <div class="sheet-b"><p class="hint">예산과 분류 필터는 8개 대분류로만 봐요. 기존 분류 이름과 원본 기록은 그대로 남겨요.</p>
       ${tabsU('maptab', [['review', '확인 필요', rv.length], ['done', '연결됨', dn.length]], mapTab, '연결 상태')}
       <div class="card list-card" data-ui-key="map-list">${list.slice(pg.from, pg.to).map(x => `<button class="settings-row" data-act="mapitem" data-v="${esc(x.name)}"><span><b>${esc(x.name)}</b><small><span class="num">${x.count}건 · ${won(x.net)}원</span> · ${x.review ? (x.newOnly ? '새 기록만 ' + core.majorLabel(x.hint) + ' · 지난 기록 확인 필요' : '기타로 집계 중' + (x.hint ? ' · ' + core.majorLabel(x.hint) + ' 제안' : '')) : '→ ' + core.majorLabel(x.id) + (x.source === 'table' ? ' (기본)' : '')}</small></span>${icon('right')}</button>`).join('') || `<p class="empty">${mapTab === 'review' ? '확인이 필요한 분류가 없어요.' : '연결된 분류가 없어요.'}</p>`}</div>
-      ${pager('mappage', pg, '개')}</div></div>`);
+      ${pager('mappage', pg, '개')}</div></div>`, true);
 }
 function openMapItem(name, pick) {
   const q = core.mappingQueue(liveTxs(), catMap(), S.settings.categories), x = q.find(i => i.name === name); if (!x) { openMapping(); return; }
@@ -1051,7 +1108,7 @@ function openMapItem(name, pick) {
         <label class="radio-row"><input type="radio" name="mscope" value="all" checked><span>과거 ${past.length}건도 적용 · 합계 <span class="num">${won(pastNet)}원</span></span></label>
         <p class="hint">기록의 분류 이름은 바꾸지 않아요. 건별로 다른 대분류가 필요하면 그 기록에서 대분류를 고르면 그 선택이 우선해요.</p></fieldset>
       <div class="err" id="map-err" role="alert"></div>`}</div>
-    ${none ? '' : `<div class="sheet-footer${x.source === 'map' || x.newOnly ? ' two' : ''}">${x.source === 'map' || x.newOnly ? '<button type="button" class="btn ghost" data-act="mapclear">연결 해제</button>' : ''}<button type="button" class="btn" data-act="mapsave">연결 저장</button></div>`}</div>`);
+    ${none ? '' : `<div class="sheet-footer${x.source === 'map' || x.newOnly ? ' two' : ''}">${x.source === 'map' || x.newOnly ? '<button type="button" class="btn ghost" data-act="mapclear">연결 해제</button>' : ''}<button type="button" class="btn" data-act="mapsave">연결 저장</button></div>`}</div>`, true);
 }
 function saveMapItem(clear) {
   const name = mapSel && mapSel.name; if (!name) return;
@@ -1065,9 +1122,11 @@ function saveMapItem(clear) {
 /* ---------------- 공유 상태 시트(상태 줄·설정): 대기 상세 · 자동 재시도 · 저장 보호 ---------------- */
 function syncSummary() {
   const n = store.pendingDetail(), st = store.status(), off = navigator.onLine === false;
-  const when = st.lastSync ? new Date(st.lastSync).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' }) : '';
-  const txt = st.syncing ? `공유 중 · 남은 ${n.total}건` : off ? `오프라인 · 공유 대기 ${n.total}건` : st.error ? `공유하지 못했어요 · 대기 ${n.total}건` : n.total ? `이 기기에 저장 · 공유 대기 ${n.total}건` : when ? `공유 완료 · 오늘 ${when}` : '아직 공유 기록이 없어요';
-  return { n, st, off, when, txt, warn: off || !!st.error || n.total > 0, err: !!st.error && !off };
+  // '오늘'은 실제 오늘에만, 다른 날은 'M월 D일'(Astra P1-11·Fable P2-5). 오프라인을 공유 중보다 먼저 본다
+  const ls = st.lastSync ? new Date(st.lastSync) : null, tm = ls ? ls.toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' }) : '';
+  const when = ls ? (ymd(ls) === today() ? '오늘 ' : (ls.getFullYear() !== new Date().getFullYear() ? ls.getFullYear() + '년 ' : '') + (ls.getMonth() + 1) + '월 ' + ls.getDate() + '일 ') + tm : '';
+  const txt = off ? `오프라인 · 공유 대기 ${n.total}건` : st.syncing ? `공유 중 · 남은 ${n.total}건` : st.error ? `공유하지 못했어요 · 대기 ${n.total}건` : n.total ? `이 기기에 저장 · 공유 대기 ${n.total}건` : n.conflicts ? `예산 충돌 ${n.conflicts}건 · 눌러서 고르기` : when ? `공유 완료 · ${when}` : '아직 공유 기록이 없어요';
+  return { n, st, off, when, txt, warn: off || !!st.error || n.total > 0 || n.conflicts > 0, err: !!st.error && !off };
 }
 function persistText() {
   const p = S.persist && S.persist.state;
@@ -1075,12 +1134,24 @@ function persistText() {
     : p === 'denied' ? '브라우저가 허락하지 않았어요 · 공유 대기 건이 있으면 앱 데이터를 지우지 마세요'
     : p === 'unsupported' ? '이 브라우저는 저장 보호 요청을 지원하지 않아요' : p === 'error' ? '요청하지 못했어요 · 다음에 앱을 열 때 다시 요청해요' : '요청 전이에요';
 }
+function openAppSheet() {
+  showSheet(`<div class="sheet-wrap">${sheetHead('앱 업데이트·설치')}
+    <div class="sheet-b"><div class="card list-card"><button class="settings-row" data-act="update"><span><b>최신 버전 받기</b><small id="ver">${esc(verText())}</small></span>${icon('right')}</button></div>
+      <p class="hint"><b>홈 화면에 추가</b> · Safari 공유 버튼 → 홈 화면에 추가. 홈 화면 앱은 Safari와 저장공간이 따로라, 처음 열 때 설정 코드를 한 번 더 넣어야 해요. 기록은 업데이트해도 그대로 남아요.</p></div></div>`, true);
+}
+function openDisplaySheet() {
+  const theme = S.theme || 'system';
+  showSheet(`<div class="sheet-wrap">${sheetHead('화면·입력')}
+    <div class="sheet-b"><span class="lab">화면 모드 <span class="h2sub">이 기기에만</span></span>
+      <div class="seg seg3 theme-seg" role="group" aria-label="화면 모드" data-ui-key="theme">${[['system', '기기 설정', 'gear'], ['light', '라이트', 'sun'], ['dark', '다크', 'moon']].map(([k, l, ic]) => `<button data-act="theme" data-v="${k}" aria-pressed="${theme === k}">${icon(ic)}<span>${l}</span></button>`).join('')}</div>
+      <label class="toggle kp-toggle" for="kp-on"><span>금액은 화면 숫자 키패드로 입력<small>끄면 휴대폰 숫자 키보드(기본)</small></span><input type="checkbox" id="kp-on" data-act="kptoggle" ${useKeypad() ? 'checked' : ''}></label></div></div>`, true);
+}
 function openSyncSheet() {
   const s = syncSummary(), next = s.st.retryAt ? new Date(s.st.retryAt).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit', second: '2-digit' }) : '';
   showSheet(`<div class="sheet-wrap">${sheetHead('공유 상태')}
     <div class="sheet-b"><div class="notice-soft${s.warn ? ' warn' : ''}" data-ui-key="sync-box"><b>${esc(s.txt)}</b><p>${s.n.total ? `기록 ${s.n.tx}건${s.n.settings ? ' + 설정 변경 ' + s.n.settings + '건' : ''} · 이 기기에 안전하게 저장돼 있어요. 아직 상대방에게는 보이지 않아요.` : '대기 중인 기록·설정이 없어요.'}</p>
       ${s.st.error ? `<p class="err-t">${esc(s.st.error)}</p>` : ''}${next && s.n.total ? `<p>자동으로 다시 보내요 · 다음 ${next}${s.st.retryN > 1 ? ` (${s.st.retryN}번째)` : ''}</p>` : ''}</div>
-      <p class="hint">마지막 공유 ${s.when ? '오늘 ' + s.when : '없음'}. 앱이 열려 있는 동안 실패하면 30초 → 1분 → 2분 … 간격으로 다시 보내요.</p>
+      <p class="hint">마지막 공유 ${s.when || '없음'}. 앱이 열려 있는 동안 실패하면 30초 → 1분 → 2분 … 간격으로 다시 보내요.</p>
       <p class="hint"><b>기기 저장 보호</b> · ${esc(persistText())}</p></div>
     <div class="sheet-footer"><button type="button" class="btn" data-act="syncnow" ${s.off ? 'disabled' : ''}>${s.off ? '연결되면 다시 공유해요' : '지금 다시 공유'}</button></div></div>`, true);
 }
@@ -1179,7 +1250,7 @@ function lfToolbar() {
 }
 const LIST_TABS = [['rows', '목록'], ['cal', '달력'], ['payer', '결제자']];
 const PAGE_ROWS = 4;
-const wide = () => matchMedia('(width > 840px)').matches;
+const wide = () => matchMedia('(width >= 840px)').matches;
 function listView() {
   anchorOffset(); anchorMonth();
   const mode = view.list === 'cal' && lf.period !== 'cycle' ? 'rows' : view.list;
@@ -1300,13 +1371,9 @@ function settingsView() {
       ${row('impopen', '파일로 빠진 기록 찾기', '카드 이용내역·다른 가계부 CSV·엑셀', 'file')}
       ${row('csv', 'CSV로 내보내기', '전체 기록을 파일로', '', 'CSV')}</div>`;
   else if (setTab === 'app') body = `<div class="card list-card" data-ui-key="set-app">
-      <button class="settings-row" data-act="syncsheet"><span><b>공유 상태</b><small class="${s.err ? 'err-t' : ''}">${esc(s.txt)}</small></span>${icon('right')}</button>
-      <div class="settings-row static"><span><b>기기 저장 보호</b><small>${esc(persistText())}</small></span></div>
-      <button class="settings-row" data-act="update"><span><b>최신 버전 받기</b><small id="ver">${esc(verText())}</small></span>${icon('right')}</button>
-      <details class="settings-row det"><summary><span><b>홈 화면에 추가</b><small>Safari 공유 버튼 → 홈 화면에 추가</small></span>${icon('down')}</summary>
-        <p class="hint">홈 화면 앱은 Safari와 저장공간이 따로라, 처음 열 때 설정 코드를 한 번 더 넣어야 해요. 기록은 업데이트해도 그대로 남아요.</p></details></div>
-    <div class="seg seg3 theme-seg" role="group" aria-label="화면 모드" data-ui-key="theme">${[['system', '기기 설정', 'gear'], ['light', '라이트', 'sun'], ['dark', '다크', 'moon']].map(([k, l, ic]) => `<button data-act="theme" data-v="${k}" aria-pressed="${theme === k}">${icon(ic)}<span>${l}</span></button>`).join('')}</div>
-    <div class="card list-card danger-zone" data-ui-key="set-conn">
+      <button class="settings-row" data-act="syncsheet"><span><b>공유 상태·저장 보호</b><small class="${s.err ? 'err-t' : ''}">${esc(s.txt)}</small></span>${icon('right')}</button>
+      <button class="settings-row" data-act="appsheet"><span><b>앱 업데이트·홈 화면에 추가</b><small id="ver">${esc(verText())}</small></span>${icon('right')}</button>
+      <button class="settings-row" data-act="displaysheet"><span><b>화면·입력</b><small>${{ system: '기기 설정', light: '라이트', dark: '다크' }[theme]} · 숫자 입력 ${useKeypad() ? '화면 키패드' : '휴대폰 키보드'}</small></span>${icon('right')}</button>
       ${row('setcode', '설정 코드 바꾸기', '이 기기의 기록과 공유 대기 건은 그대로 남아요')}
       <button class="settings-row danger-row" data-act="disconnect"><span><b>이 기기 연결 해제</b><small>공유 대기 중인 기록·설정이 있으면 먼저 공유돼야 해요</small></span></button></div>`;
   else body = `<div class="card list-card" data-ui-key="set-book">
@@ -1381,7 +1448,16 @@ function upcomingIn(r) {
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
 /* 정기 (v25, spec 10절): 달 선택 → 예정 / 기록됨 / 꺼짐. 지난 달은 예정액이 아니라 실제로 기록된 정기 지출 */
-let recurTab = 'up', rmoff = 0, recurPage = 0;
+let recurTab = 'up', rmoff = 0, recurPage = 0, ruleMgrPage = 0;
+// 규칙 관리: 모든 규칙(켜짐·꺼짐) 4개/쪽, 눌러서 고치기·켜고 끄기
+function openRuleManage() {
+  const list = rules() || [], pg = core.pageOf(list.length, ruleMgrPage, 4); ruleMgrPage = pg.page;
+  showSheet(`<div class="sheet-wrap">${sheetHead('정기 규칙 관리')}
+    <div class="sheet-b"><p class="hint">정해진 날 기록을 한 번 만드는 예약이에요. 바꾼 내용은 이후 예정부터 적용되고 지난 기록은 그대로예요.</p>
+      <div class="card list-card" data-ui-key="rule-list">${list.slice(pg.from, pg.to).map(x => `<button class="settings-row" data-act="rule" data-v="${esc(x.id)}"><span><b>${esc(x.name)}</b><small>${ruleWhen(x)} · <span class="num">${won(x.amount)}원</span> · ${x.active ? '켜짐' : '꺼짐'}</small></span>${icon('right')}</button>`).join('') || '<p class="empty">등록한 규칙이 없어요.</p>'}</div>
+      ${pager('rmpage', pg, '개')}</div>
+    <div class="sheet-footer"><button type="button" class="btn" data-act="rule">정기 지출 추가</button></div></div>`, true);
+}
 function recurView() {
   const list = rules();
   if (!list) return `<div class="page-title"><div class="pt-l"><h1>정기 지출</h1></div></div>
@@ -1389,13 +1465,15 @@ function recurView() {
   const r = core.monthRange(rmoff, new Date()), td = today(), past = r.end < td;
   const up = past ? [] : upcomingIn(r), done = liveTxs().filter(t => inRange(t, r) && (t.created_by === '정기' || /^rec-/.test(t.id))).sort(byNewest);
   const on = list.filter(x => x.active), off = list.filter(x => !x.active), from = r.start > td ? r.start : td;
-  const tab = recurTab, items = tab === 'done' ? done : tab === 'off' ? off : on.slice().sort((a, b) => (nextFrom(a, from) || '9').localeCompare(nextFrom(b, from) || '9'));
+  // 예정 = 선택한 달에 실제로 남은 예정(규칙 하나에 여러 번이면 날짜마다). 이 달에 오지 않는 규칙은 넣지 않는다(Astra P1-09). 규칙 전체는 '규칙 관리'
+  const upRows = up.map(u => Object.assign({}, u.rule, { _date: u.date }));
+  const tab = recurTab, items = tab === 'done' ? done : tab === 'off' ? off : upRows;
   const pg = core.pageOf(items.length, recurPage, 4); recurPage = pg.page;
   const total = tab === 'up' ? up.reduce((a, u) => a + u.rule.amount, 0) : tab === 'done' ? netOf(done) : off.filter(x => x.freq === 'month').reduce((a, x) => a + x.amount, 0);
   const eyebrow = tab === 'up' ? (past ? '지난 달이에요' : rmoff === 0 ? '이 달, 앞으로 나갈 돈' : r.month + '월에 나갈 돈') : tab === 'done' ? r.month + '월에 기록된 정기 지출' : '잠시 멈춘 정기 지출(매월 합계)';
   const note = tab === 'up' ? (past ? '지난 달은 ‘기록됨’에서 실제 기록을 확인해요.' : `예정 ${up.length}건${up.length ? ' · 다음 ' + md(up[0].date) : ''} · 실제 지출에는 아직 넣지 않았어요.`) : tab === 'done' ? `${done.length}건 · 정해진 날 자동으로 남은 기록이에요.` : `${off.length}개 · 켜면 다음 정해진 날부터 기록돼요.`;
   const ruleRow = x => {
-    const nx = x.active ? nextFrom(x, from) : '', nd = nx ? parseDate(nx) : null;
+    const nx = x._date || (x.active ? nextFrom(x, from) : ''), nd = nx ? parseDate(nx) : null;
     return `<div class="rule${x.active ? '' : ' off'}"><button class="tx" data-act="rule" data-v="${esc(x.id)}" aria-label="${esc(x.name)} ${won(x.amount)}원, ${ruleWhen(x)}, ${esc(x.payer || '-')} 결제${x.active ? (nx ? ', 다음 ' + (nd.getMonth() + 1) + '월 ' + nd.getDate() + '일' : ', 종료') : ', 자동 기록 꺼짐'}. 눌러서 고치기">
       <span class="ic datebadge" aria-hidden="true">${nd ? `<small>${nd.getMonth() + 1}월</small><b class="num">${nd.getDate()}</b>` : `<small>${x.active ? '종료' : '꺼짐'}</small>${categoryIcon(x.category)}`}</span>
       <span class="mid"><span class="m">${esc(x.name)}</span><span class="meta">${esc(x.payer || '-')} · ${ruleWhen(x)}${x.active ? '' : ' · <b class="off-t">자동 기록 꺼짐</b>'}</span></span>
@@ -1403,16 +1481,16 @@ function recurView() {
       <label class="rule-sw"><input type="checkbox" data-act="rtoggle" data-v="${esc(x.id)}" ${x.active ? 'checked' : ''} aria-label="${esc(x.name)} 자동 기록"><span class="sw-t">${x.active ? '켜짐' : '꺼짐'}</span></label></div>`;
   };
   const rows = items.slice(pg.from, pg.to);
-  return `<div class="page-title"><div class="pt-l"><h1>정기 지출</h1></div><button class="icon-btn" data-act="rule" aria-label="정기 지출 추가">${icon('plus')}</button></div>
+  return `<div class="page-title"><div class="pt-l"><h1>정기 지출</h1></div><div class="pt-actions"><button class="link" data-act="rulemanage">규칙 관리 ${list.length}개</button><button class="icon-btn" data-act="rule" aria-label="정기 지출 추가">${icon('plus')}</button></div></div>
     <div class="recur-side" data-ui-key="recur-side">
     <div class="period-nav" data-ui-key="recur-nav"><button class="pn-btn" data-act="recmon" data-v="-1" aria-label="이전 달" ${rmoff <= -24 ? 'disabled' : ''}>${icon('left')}</button>
       <div class="period-lbl static"><b><span>${r.year}년 ${r.month}월</span></b><small class="num">${fd(r.start)} ~ ${fd(r.end)}</small></div>
       <button class="pn-btn" data-act="recmon" data-v="1" aria-label="다음 달" ${rmoff >= 12 ? 'disabled' : ''}>${icon('right')}</button></div>
-    ${tabsU('rtab', [['up', '예정', on.length], ['done', '기록됨', done.length], ['off', '꺼짐', off.length]], tab, '정기 지출 보기')}
+    ${tabsU('rtab', [['up', '예정', up.length], ['done', '기록됨', done.length], ['off', '꺼짐', off.length]], tab, '정기 지출 보기')}
     <section class="card rules-summary" data-ui-key="rules-sum"><p class="eyebrow">${eyebrow}</p>${amt(total)}<p class="rs-note">${note}</p></section></div>
     <div class="recur-main" data-ui-key="recur-main">
     ${rows.length ? `<div class="${tab === 'done' ? 'card list-card' : 'rules-list'}" data-ui-key="rules">${tab === 'done' ? rows.map(t => txRow(t)).join('') : rows.map(ruleRow).join('')}</div>${pager('recpage', pg, tab === 'done' ? '건' : '개')}`
-      : `<div class="card"><div class="empty">${tab === 'done' ? '이 달에 기록된 정기 지출이 없어요.' : tab === 'off' ? '꺼 둔 정기 지출이 없어요.' : '등록한 정기 지출이 없어요.'}</div>${tab === 'up' && !list.length ? '<button class="btn" data-act="rule">정기 지출 추가</button>' : ''}</div>`}
+      : `<div class="card"><div class="empty">${tab === 'done' ? '이 달에 기록된 정기 지출이 없어요.' : tab === 'off' ? '꺼 둔 정기 지출이 없어요.' : !list.length ? '등록한 정기 지출이 없어요.' : past ? '지난 달은 예정 대신 실제 기록을 봐요.' : '이 달에 남은 예정이 없어요.'}</div>${tab === 'up' && !list.length ? '<button class="btn" data-act="rule">정기 지출 추가</button>' : tab === 'up' && past ? '<button class="btn ghost" data-act="rtab" data-v="done">기록됨 보기</button>' : ''}</div>`}
     <p class="hint recur-help">정해진 날 기록을 한 번 만드는 예약이에요. 금액이 달라지면 그 기록만 고치면 되고, 지운 기록은 다시 만들지 않아요.</p>
     </div>`;
 }
@@ -1501,7 +1579,7 @@ function deleteRule() {
 /* ---------------- 입력 시트 ---------------- */
 let draft = null, saved = false, editing = false, editBase = '';
 // 수정 중 닫기 보호(Astra E01): 원본과 지금 입력을 비교
-const editKey = d => JSON.stringify([d.amountText != null ? d.amountText : won(d.amount), d.merchant, d.date, d.payer, d.method, d.note, !!d.refund_pending, d.type, d.category || '']);
+const editKey = d => JSON.stringify([d.amountText != null ? d.amountText : won(d.amount), d.merchant, d.date, d.payer, d.method, d.note, !!d.refund_pending, d.type, d.category || '', d.major || '']);
 function editDirty() {
   if (!editing || !draft || saved) return false;
   const f = $('[data-form=entry]'); if (!f) return false;
@@ -1550,7 +1628,7 @@ function openEntry(id, ctx) {
   const last = liveTxs().filter(t => t.created_by === S.me).sort((a, b) => b.created_at - a.created_at)[0];
   draft = ex ? Object.assign({}, ex) : {
     id: uid(), date: today(), merchant: '', amount: 0, type: 'expense',
-    method: (last && last.method) || S.settings.methods[0] || '', category: '',
+    method: (last && last.method) || S.settings.methods[0] || '', category: '', major: '',
     payer: S.me, beneficiary: defaultBene(), note: '', refund_pending: false,
     created_by: S.me, created_at: Date.now(), updated_at: 0, deleted: false,
   };
@@ -1564,60 +1642,65 @@ function openEntry(id, ctx) {
   dlg.showModal();
   const a = $('#amount');
   a.style.setProperty('--len', Math.max(6, a.value.length));
-  a.focus();
+  a.focus(); // OS 숫자 키보드(화면 키패드를 켰으면 키패드)
   if (a.value) a.setSelectionRange(a.value.length, a.value.length); // 수정·이어 쓰는 초안은 커서를 끝에
 }
-// 기록 시트(v25 기본/상세, spec 10절): 기본 = 금액 카드 → 화면 키패드 → 거래처 → 대분류 8개(4칸+더보기) → 결제자·결제수단 칩·날짜.
-// 상세 = 세부 분류(기존 분류 이름, 예산은 대분류로 묶임) · 종류 · 환불 예정 · 메모 · 즐겨찾기. 두 칸 모두 한 폼 안이라 탭을 오가도 초안이 그대로다.
-// 대분류 칸을 누르면 분류 칸(category)에 대분류 이름을 그대로 적는다(건별 명시). 세부 분류를 고르면 그 이름을 적고 대분류는 연결 표로 정한다.
-// 화면 키패드 안전장치: 키도 직접 입력과 같은 금액 경로(moneyInput), 10자리를 넘는 키는 받지 않고 이유 표시, 금액 칸은 inputmode=none(OS 키보드와 동시에 뜨지 않음)
-const CAT_QUICK = 4;
+// 기록 시트(v25 2차, spec 8·10절): 기본 = 금액(OS 숫자 키보드) → 거래처 → 대분류 8개(4열×2행) → 결제자·결제수단·날짜 → 저장.
+// 상세 = 세부 분류(기존 분류 이름) · 종류 · 환불 예정 · 메모 · 즐겨찾기. 두 칸 모두 한 폼 안이라 탭을 오가도 초안이 그대로다.
+// 대분류(draft.major, 시트 major 열)와 세부 분류(draft.category)는 따로 저장한다(Astra P0-01). 대분류를 안 고르면 세부 분류의 연결로 집계.
+// 서버가 옛 버전(major 열 없음)이면 대분류 칸이 분류 칸에 대분류 이름을 적는 v25 1차 방식으로 동작하고 '서버 업데이트 필요'를 알린다.
+// 화면 숫자 키패드는 설정 → 앱·연결 → 화면·입력에서 켤 때만(기본은 OS 숫자 키보드). 켜면 키도 직접 입력과 같은 금액 경로(moneyInput)
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0', 'back'];
 let entryStage = 'basic';
 const MAJOR_NAMES = core.MAJORS.map(m => m.label);
 const detailCats = () => S.settings.categories.filter(c => !MAJOR_NAMES.includes(c));
-// 지금 초안의 대분류 이름(분류를 안 골랐으면 '')
-const entryMajor = () => draft && draft.category ? core.majorLabel(core.majorOf(Object.assign({ created_at: Date.now() }, draft), catMap()).id) : '';
+const hasMajorCol = () => store.features().includes('major');
+const useKeypad = () => S.keypad === true;
+// 지금 초안의 대분류 이름(정하지 않았으면 ''), 그리고 그것이 건별 선택인지(세부 분류 연결로 정해진 것인지)
+const entryMajor = () => draft && (draft.major || draft.category) ? core.majorLabel(core.majorOf(Object.assign({ created_at: Date.now() }, draft), catMap()).id) : '';
+const entryMajorExplicit = () => !!(draft && (core.MAJOR_IDS.includes(draft.major) || MAJOR_NAMES.includes(draft.category)));
 function entryHtml(isEdit) {
-  const d = draft, st = S.settings;
+  const d = draft, st = S.settings, kp = useKeypad();
   const stats = merchantStats();
   const top = Object.entries(stats).sort((a, b) => b[1].n - a[1].n).slice(0, 3).map(([k]) => k);
   const methods = st.methods.includes(d.method) || !d.method ? st.methods : st.methods.concat(d.method);
-  const em = entryMajor(), dcats = [...new Set([...detailCats(), ...(d.category && !MAJOR_NAMES.includes(d.category) ? [d.category] : [])])];
-  const cell = c => `<button type="button" class="cat-cell" data-act="cat" data-v="${esc(c)}" aria-pressed="${em === c}"><span class="ci" aria-hidden="true">${categoryIcon(c)}</span><span class="cn">${esc(c)}</span></button>`;
+  const em = entryMajor(), ex = entryMajorExplicit(), dcats = [...new Set([...detailCats(), ...(d.category && !MAJOR_NAMES.includes(d.category) ? [d.category] : [])])];
+  const cell = c => `<button type="button" class="cat-cell${em === c && !ex ? ' derived' : ''}" data-act="cat" data-v="${esc(c)}" aria-pressed="${em === c}"><span class="ci" aria-hidden="true">${categoryIcon(c)}</span><span class="cn">${esc(c)}</span></button>`;
   const paste = isEdit ? '' : `<button type="button" class="link with-icon paste-link" data-act="impopen" data-v="paste">${icon('paste')}<span>알림 붙여넣기</span></button>`;
   const stage = entryStage === 'more' ? 'more' : 'basic';
-  return `<form data-form="entry" class="sheet-wrap stage-${stage}" novalidate>
+  return `<form data-form="entry" class="sheet-wrap stage-${stage}${kp ? ' with-kp' : ''}" novalidate>
     ${sheetHead(isEdit ? '기록 수정' : '지출 기록', '', paste)}
     <div class="sheet-b">
       <div class="seg seg2 entry-seg" role="group" aria-label="입력 단계"><button type="button" data-act="estage" data-v="basic" aria-pressed="${stage === 'basic'}">기본</button><button type="button" data-act="estage" data-v="more" aria-pressed="${stage === 'more'}">상세<span class="es-sum" id="es-sum">${esc(moreSummary())}</span></button></div>
       <div class="ep ep-basic">
       <div class="field amount-field">
         <div class="amount-card" data-act="kpshow"><label for="amount">얼마를 썼나요?</label>
-        <div class="amount-in"><input id="amount" name="amount" inputmode="none" autocomplete="off" placeholder="0" value="${esc(d.amountText != null ? d.amountText : d.amount ? won(d.amount) : '')}" class="num" aria-describedby="entry-err amount-echo" aria-invalid="${!!d.amountErr && d.amountErr !== 'empty'}"${d.amountErr && d.amountErr !== 'empty' ? ' data-raw="1"' : ''}><span>원</span></div></div>
+        <div class="amount-in"><input id="amount" name="amount" inputmode="${kp ? 'none' : 'numeric'}" enterkeyhint="next" autocomplete="off" placeholder="0" value="${esc(d.amountText != null ? d.amountText : d.amount ? won(d.amount) : '')}" class="num" aria-describedby="entry-err amount-echo" aria-invalid="${!!d.amountErr && d.amountErr !== 'empty'}"${d.amountErr && d.amountErr !== 'empty' ? ' data-raw="1"' : ''}><span>원</span></div></div>
         <p class="amount-echo num" id="amount-echo" aria-live="polite">${d.amount >= 10000 ? koWon(d.amount) : ''}</p>
         <div class="err" id="entry-err" role="alert">${d.amountErr && d.amountErr !== 'empty' ? WON_ERR[d.amountErr] : ''}</div>
         <p class="entry-ctx" id="entry-ctx">${ctxLine()}</p></div>
-      <div class="keypad" id="keypad" role="group" aria-label="금액 숫자 키패드">${KEYS.map(k => `<button type="button" class="kp" data-act="key" data-v="${k}" aria-label="${k === 'back' ? '한 자리 지우기' : k === '00' ? '0 두 개' : k}">${k === 'back' ? icon('backspace') : k}</button>`).join('')}</div>
+      ${kp ? `<div class="keypad" id="keypad" role="group" aria-label="금액 숫자 키패드">${KEYS.map(k => `<button type="button" class="kp" data-act="key" data-v="${k}" aria-label="${k === 'back' ? '한 자리 지우기' : k === '00' ? '0 두 개' : k}">${k === 'back' ? icon('backspace') : k}</button>`).join('')}</div>` : ''}
       <div class="field merchant-field">
         <input id="merchant" name="merchant" class="in" list="mlist" autocomplete="off" placeholder="어디에 썼나요?" aria-label="거래처 (선택 입력)" value="${esc(d.merchant)}">
         <datalist id="mlist">${Object.keys(stats).map(m => `<option value="${esc(m)}">`).join('')}</datalist>
-        ${top.length || !isEdit ? `<div class="chips recent-chips">${isEdit ? '' : `<button type="button" class="chip fav-chip-btn" data-act="favlist">${icon('star')}<span>즐겨찾기</span></button>`}${top.map(m => `<button type="button" class="chip" data-act="merchant" data-v="${esc(m)}" aria-pressed="${d.merchant === m}" aria-label="${esc(m)}">${esc(m)}</button>`).join('')}</div>` : ''}</div>
-      <div class="field cat-pick" id="cat-pick"><span class="cat-note" id="cat-label">${catLabel()}</span>
-        <div class="cat-quick" role="group" aria-label="대분류">${MAJOR_NAMES.slice(0, CAT_QUICK).map(cell).join('')}${moreCell()}</div>
-        <div class="cat-all"><div class="cat-grid" id="cats" role="group" aria-label="대분류 전체">${MAJOR_NAMES.map(cell).join('')}</div>
-          <button type="button" class="link cat-fold" data-act="morecat" aria-expanded="true">대분류 접기</button></div></div>
+        ${top.length ? `<div class="chips recent-chips">${top.map(m => `<button type="button" class="chip" data-act="merchant" data-v="${esc(m)}" aria-pressed="${d.merchant === m}" aria-label="${esc(m)}">${esc(m)}</button>`).join('')}</div>` : ''}</div>
+      ${hasMajorCol() ? `<div class="field cat-pick open" id="cat-pick"><span class="cat-note" id="cat-label">${catLabel()}</span>
+        <div class="cat-all"><div class="cat-grid" id="cats" role="group" aria-label="대분류">${MAJOR_NAMES.map(cell).join('')}</div></div></div>`
+      : `<div class="field cat-pick open legacy-cats" id="cat-pick"><span class="cat-note" id="cat-label">대분류 선택은 서버 업데이트 후 사용할 수 있어요 · 지금은 분류로 집계</span>
+        <div class="cat-all"><div class="cat-grid" id="cats" role="group" aria-label="분류">${[...new Set([...st.categories, ...(d.category ? [d.category] : [])])].map(c => `<button type="button" class="cat-cell" data-act="ucat" data-v="${esc(c)}" aria-pressed="${d.category === c}"><span class="ci" aria-hidden="true">${categoryIcon(c)}</span><span class="cn">${esc(c)}</span></button>`).join('')}</div></div></div>`}
       <div class="entry-meta">
         <label class="chip-in duo" for="payer">${icon('card')}<select id="payer" name="payer" aria-label="결제자">${payerList().map(u => `<option ${d.payer === u ? 'selected' : ''}>${u}</option>`).join('')}</select><span class="duo-sep" aria-hidden="true">·</span><select id="method" name="method" aria-label="결제수단">${methods.map(m => `<option ${d.method === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select>${icon('down')}</label>
         <label class="chip-in date-chip" for="date" data-act="datepick"><span class="date-txt" aria-hidden="true">${dotDate(d.date)}</span>${icon('down')}<input id="date" name="date" type="date" aria-label="날짜" value="${esc(d.date)}" max="${today()}"></label></div>
       </div>
       <div class="ep ep-more">
-      <div class="field"><span class="lab" id="dcat-lab">세부 분류 <span class="h2sub">선택 · 예산은 대분류로 묶여요</span></span>
-        <div class="chips dcats" role="group" aria-labelledby="dcat-lab">${dcats.map(c => { const mo = core.majorOf({ category: c, created_at: Date.now() }, catMap()); return `<button type="button" class="chip" data-act="dcat" data-v="${esc(c)}" aria-pressed="${d.category === c}">${esc(c)}<small>${mo.review ? '확인 필요' : core.majorLabel(mo.id)}</small></button>`; }).join('') || '<p class="hint">세부 분류가 없어요. 설정 → 분류·결제수단·결제자에서 추가할 수 있어요.</p>'}</div></div>
+      ${hasMajorCol() ? `<div class="field"><span class="lab" id="dcat-lab">세부 분류 <span class="h2sub">선택 · 대분류와 따로 저장돼요</span></span>
+        <div class="chips dcats" role="group" aria-labelledby="dcat-lab">${dcats.map(c => { const mo = core.majorOf({ category: c, created_at: Date.now() }, catMap()); return `<button type="button" class="chip" data-act="dcat" data-v="${esc(c)}" aria-pressed="${d.category === c}">${esc(c)}<small>${mo.review ? '확인 필요' : core.majorLabel(mo.id)}</small></button>`; }).join('') || '<p class="hint">세부 분류가 없어요. 설정 → 분류·결제수단·결제자에서 추가할 수 있어요.</p>'}</div></div>`
+        : '<p class="notice-soft warn srv-note">서버 업데이트(Apps Script 새 버전) 뒤에 대분류와 세부 분류를 따로 고를 수 있어요. 지금은 기본 탭의 분류 하나로 저장하고, 대분류는 설정 → 대분류 연결로 정해요.</p>'}
       <div class="field"><span class="lab">종류</span><div class="seg">${Object.entries(TYPE_LABEL).map(([k, l]) => `<button type="button" data-act="type" data-v="${k}" aria-pressed="${d.type === k}">${l}</button>`).join('')}</div>
         <p class="hint">이체·카드대금은 ‘지출 제외’로 기록해요. 순지출·카드값에는 더하지 않아요.</p></div>
       <div class="field"><label class="toggle" for="rp"><span>환불 받을 예정</span><input type="checkbox" id="rp" name="refund_pending" ${d.refund_pending ? 'checked' : ''}></label></div>
       <div class="field"><label for="note">메모</label><input id="note" name="note" class="in" autocomplete="off" placeholder="예: 선물, 정기검사" value="${esc(d.note)}"></div>
+      ${isEdit ? '' : `<div class="field"><button type="button" class="btn ghost fav-chip-btn" data-act="favlist">${icon('star')}<span>즐겨찾기에서 불러오기</span></button></div>`}
       ${isEdit && d.type === 'expense' && store.prefs() ? `<div class="field fav-field">${favButton()}<p class="hint" id="fav-msg" role="status"></p></div>` : ''}
       ${isEdit ? `<div class="field"><button type="button" class="btn danger" data-act="delete">기록 삭제</button></div>` : ''}
       ${isEdit ? `<p class="hint">기록: ${esc(d.created_by || '-')}</p>` : ''}
@@ -1650,23 +1733,20 @@ document.addEventListener('focusin', e => {
 // 키패드를 눌러도 금액 칸의 포커스·커서를 유지(마우스·손가락). 화면 낭독기의 두 번 탭은 click만 와서 그대로 동작
 // 손가락·마우스로 키를 누르면 첫 탭부터 버튼이 포커스를 가져가지 않고 금액 칸에 포커스(Fable P2-3). 화면 낭독기의 두 번 탭(click만)은 낭독 위치를 키패드에 둔다
 document.addEventListener('pointerdown', e => { if (!(e.target.closest && e.target.closest('#keypad .kp'))) return; e.preventDefault(); const a = $('#amount'); if (a && document.activeElement !== a) a.focus({ preventScroll: true }); });
-// 대분류 한 줄의 마지막 칸: 고른 대분류가 빠른 칸 밖이면 그 이름을(눌린 상태), 아니면 '더보기'
-function moreCell() {
-  const c = entryMajor(), beyond = c && MAJOR_NAMES.indexOf(c) >= CAT_QUICK;
-  return `<button type="button" class="cat-cell cat-more" data-act="morecat" aria-expanded="false" aria-pressed="${!!beyond}" aria-label="${beyond ? '대분류 ' + esc(c) + ' 선택됨, ' : ''}대분류 더보기"><span class="ci" aria-hidden="true">${beyond ? categoryIcon(c) : icon('more')}</span><span class="cn">${beyond ? esc(c) : '더보기'}</span></button>`;
-}
+function moreCell() { return ''; } // v25 2차: 대분류 8개를 늘 펼쳐 보여 더보기 칸이 없다
 function refreshCats() {
-  const em = entryMajor(), c = draft ? draft.category || '' : '';
-  document.querySelectorAll('#sheet [data-act=cat]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === em)));
+  const em = entryMajor(), ex = entryMajorExplicit(), c = draft ? draft.category || '' : '';
+  document.querySelectorAll('#sheet [data-act=cat]').forEach(b => { b.setAttribute('aria-pressed', String(b.dataset.v === em)); b.classList.toggle('derived', b.dataset.v === em && !ex); });
   document.querySelectorAll('#sheet [data-act=dcat]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === c)));
-  const m = $('#sheet .cat-more'); if (m) m.outerHTML = moreCell();
   refreshCatLabel();
 }
-// 분류 안내: 추천이면 '카페 추천 · 식비', 세부 분류를 골랐으면 '세부 분류 카페 · 식비로 묶여요'. 기본 분류는 미리 고르지 않는다(안 고르면 미분류 = 기타·확인 필요)
+// 분류 안내: 추천이면 '카페 추천 · 식비', 대분류를 안 고르고 세부 분류만 있으면 '세부 분류 카페에 따라 식비로 집계', 둘 다 고르면 '생활 · 세부 분류 카페'
 function catLabel() {
-  const c = draft && draft.category; if (!c) return '';
-  const em = entryMajor(), detail = !MAJOR_NAMES.includes(c);
-  return draft.catSug ? `<b>${esc(c)}</b> 추천${detail ? ' · ' + esc(em) : ''}` : detail ? `세부 분류 <b>${esc(c)}</b> · ${esc(em)}로 묶여요` : '';
+  if (!draft) return '';
+  const c = draft.category, em = entryMajor(), detail = c && !MAJOR_NAMES.includes(c);
+  if (draft.catSug && c) return `<b>${esc(c)}</b> 추천${detail ? ' · ' + esc(em) : ''}`;
+  if (core.MAJOR_IDS.includes(draft.major)) return detail ? `<b>${esc(em)}</b> · 세부 분류 ${esc(c)}` : '';
+  return detail ? `세부 분류 <b>${esc(c)}</b>에 따라 ${esc(em)}로 집계 · 대분류를 고르면 그것이 먼저예요` : '';
 }
 function refreshCatLabel() { const el = $('#cat-label'); if (el) el.innerHTML = catLabel(); }
 // 상세 탭 이름 옆 요약: 기본값(지출·환불 예정 없음·메모 없음·세부 분류 없음)이면 비우고, 바꾼 것만
@@ -1703,6 +1783,7 @@ function suggestFor(merchant) {
   if (!s) return;
   const t = s.last;
   if (t.category) { draft.category = t.category; draft.catSug = true; refreshCats(); }
+  if (hasMajorCol() && core.MAJOR_IDS.includes(t.major) && !draft.major) { draft.major = t.major; draft.catSug = true; refreshCats(); }
   if (t.method && S.settings.methods.includes(t.method)) { draft.method = t.method; $('#method').value = t.method; }
   refreshSummary();
 }
@@ -1834,7 +1915,7 @@ let favUndo = null;
 /* ---------------- 가져오기: 카드 알림 붙여넣기 · 파일 (확인 목록은 공용) ---------------- */
 const XLSX_URL = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
 const XLSX_SRI = 'sha512-r22gChDnGvBylk90+2e/ycr3RVrDi8DIOkIGNhJlKfuyQM4tIRAI062MaV8sfjQKYVGjOBaZBOA87z+IhZE9DA==';
-const IMP_PAGE = 100, IMP_MAX_ROWS = 5000, IMP_MAX_BYTES = 10 * 1024 * 1024;
+const IMP_PER = 3, IMP_PAGE = 100, IMP_MAX_ROWS = 5000, IMP_MAX_BYTES = 10 * 1024 * 1024;
 let imp = null, impPrev = null, xlsxLoading = null;
 function loadXlsx() {
   if (window.XLSX) return Promise.resolve(window.XLSX);
@@ -1911,7 +1992,7 @@ async function loadImportFile(file) {
     const si = sheets.reduce((b, s, i) => s.rows.length > sheets[b].rows.length ? i : b, 0);
     mine.file = { name: file.name, u8, sheets, si, enc: '', negative: '' };
     setupMapping();
-    mine.step = 'map';
+    mine.step = 'map'; mine.mapTab = 'cols';
   } catch (e) { if (stale()) return; mine.err = e.message || '파일을 읽지 못했어요'; }
   mine.loading = false; renderImport();
 }
@@ -1941,22 +2022,27 @@ function mapHtml() {
   const needNeg = conv && conv.negatives && !f.negative;
   const ready = conv && f.mapping.date >= 0 && f.mapping.amount >= 0 && conv.items.length && !needNeg;
   const isCsv = f.sheets.length === 1 && !/\.(xlsx|xls|xlsm)$/i.test(f.name);
+  const mt = imp.mapTab || 'cols'; // 열 연결 화면도 한 묶음씩(Astra P2-01): 필수 열 / 미리보기 / 추가 연결
   return `<div class="sheet-wrap">${impHead('빠진 기록 가져오기', true)}
-    <div class="sheet-b">
+    <div class="sheet-b mapt-${mt}">
+      ${tabsU('mapview', [['cols', '필수 열'], ['preview', '미리보기'], ['more', '추가 연결']], mt, '열 연결 단계', 'mapview')}
+      <div class="mt-sec mt-cols">
       <div class="file-line"><span>${icon('file')}<b>${esc(f.name)}</b> <span class="muted">${f.data.length.toLocaleString('ko-KR')}줄</span></span><button type="button" class="link" data-act="impfile">다른 파일</button></div>
       ${f.over ? `<p class="err" role="alert">5,000줄이 넘어요(${f.data.length.toLocaleString('ko-KR')}줄). 카드사에서 기간을 나눠 내려받아 주세요.</p>` : ''}
       ${f.sheets.length > 1 ? `<label class="map-row" for="map-sheet"><span>시트</span><select id="map-sheet" class="in" data-map="sheet">${f.sheets.map((s, i) => `<option value="${i}" ${i === f.si ? 'selected' : ''}>${esc(s.name)} (${s.rows.length}줄)</option>`).join('')}</select></label>` : ''}
-      <label class="map-row" for="map-head"><span>항목 이름이 있는 줄</span><select id="map-head" class="in" data-map="head"><option value="-1" ${f.h < 0 ? 'selected' : ''}>없음 (첫 줄부터 내용)</option>${rows.slice(0, 15).map((r, i) => `<option value="${i}" ${f.h === i ? 'selected' : ''}>${i + 1}번째 줄: ${esc(r.filter(v => v !== '').slice(0, 4).join(', ').slice(0, 40))}</option>`).join('')}</select></label>
-      ${isCsv ? `<p class="hint enc-line">한글이 깨지나요? <button type="button" class="link" data-act="impenc">${f.enc === 'euc-kr' ? '자동으로 다시 읽기' : '한글 파일로 다시 읽기'}</button></p>` : ''}
       <h2 class="map-h">어떤 열인지 확인해 주세요</h2>
       <div class="column-map">${ROLES.slice(0, 3).map(sel).join('')}</div>
       ${conv && conv.negatives ? `<div class="field neg-field${needNeg ? ' need' : ''}" id="neg-field" tabindex="-1"><span class="lab" id="neg-lab">음수 금액이 ${conv.negatives}줄 있어요. 어떻게 기록할까요? <span class="req">필수</span></span><div class="seg" role="group" aria-labelledby="neg-lab">${[['refund', '환불'], ['expense', '지출'], ['skip', '건너뛰기']].map(([k, l]) => `<button type="button" data-act="impneg" data-v="${k}" aria-pressed="${f.negative === k}">${l}${conv.negSuggested === k ? ' <small>추천</small>' : ''}</button>`).join('')}</div>
         <p class="hint">카드 이용내역의 음수는 보통 취소(환불), 다른 가계부는 보통 지출이에요.</p></div>` : ''}
+      ${conv ? `<p class="hint">${conv.items.length}건 읽음${conv.unread.length ? ` · ${conv.unread.length}줄은 가져올 수 없어요` : ''} · 미리보기에서 확인</p>` : ''}</div>
+      <div class="mt-sec mt-preview">
       <h2 class="map-h">미리보기 <span class="h2sub">앞쪽 원본 3줄</span></h2>
       <div class="card file-preview">${pv.map(({ r, it, why }) => `<div class="pv-row"><span class="pv-src">${esc(r.filter(v => v !== '' && v != null).join(' · ').slice(0, 70))}</span>
         ${it ? `<span class="pv-out"><span>→ ${it.date.slice(0, 4) !== String(new Date().getFullYear()) ? it.date.slice(0, 4) + '.' : ''}${md(it.date)}${it.time ? ' ' + it.time : ''} · ${esc(it.merchant || '거래처 없음')}</span><b class="num${it.type === 'refund' ? ' ref' : ''}">${it.type === 'refund' ? '환불 ' : it.type === 'transfer' ? '제외 ' : ''}${it.amount ? won(it.amount) + '원' : esc(it.foreign || '금액 없음')}</b></span>` : `<span class="pv-out pv-bad">→ ${esc(why || (f.mapping.date < 0 ? '날짜 열을 골라 주세요' : f.mapping.amount < 0 ? '금액 열을 골라 주세요' : '이 줄은 건너뛰어요'))}</span>`}</div>`).join('') || '<div class="empty">내용이 없어요</div>'}</div>
-      ${conv ? `<p class="hint">${conv.items.length}건 읽음${conv.unread.length ? ` · ${conv.unread.length}줄은 가져올 수 없어요(다음 화면에서 이유 확인)` : ''}</p>` : ''}
-      <details class="more map-more" data-k="map-more"><summary><span class="sum-wrap"><span class="sum-lab">더 연결하기</span><span class="sum">시각·종류·통화·분류·결제자·결제수단·메모·할부</span></span>${icon('down')}</summary><div class="column-map">${ROLES.slice(3).map(sel).join('')}</div></details>
+      ${conv ? `<p class="hint">${conv.items.length}건 읽음${conv.unread.length ? ` · ${conv.unread.length}줄은 가져올 수 없어요(다음 화면에서 이유 확인)` : ''}</p>` : ''}</div>
+      <div class="mt-sec mt-more">      <label class="map-row" for="map-head"><span>항목 이름이 있는 줄</span><select id="map-head" class="in" data-map="head"><option value="-1" ${f.h < 0 ? 'selected' : ''}>없음 (첫 줄부터 내용)</option>${rows.slice(0, 15).map((r, i) => `<option value="${i}" ${f.h === i ? 'selected' : ''}>${i + 1}번째 줄: ${esc(r.filter(v => v !== '').slice(0, 4).join(', ').slice(0, 40))}</option>`).join('')}</select></label>
+      ${isCsv ? `<p class="hint enc-line">한글이 깨지나요? <button type="button" class="link" data-act="impenc">${f.enc === 'euc-kr' ? '자동으로 다시 읽기' : '한글 파일로 다시 읽기'}</button></p>` : ''}
+<p class="hint">시각·종류·통화·분류·결제자·결제수단·메모·할부 열이 있으면 연결해요(선택).</p><div class="column-map">${ROLES.slice(3).map(sel).join('')}</div></div>
     </div>
     <div class="sheet-footer"><div class="err" id="imp-err" role="alert">${esc(imp.err)}</div>
       ${needNeg ? '<button type="button" class="btn" data-act="impgoneg">음수 금액 처리 선택</button>' : `<button type="button" class="btn" data-act="impfind" ${ready ? '' : 'disabled'}>확인 목록 보기</button>`}</div></div>`;
@@ -2025,13 +2111,13 @@ function impRow(it, i) {
   const m = it.match;
   const match = m ? `<span class="imp-match">기록: ${parseDate(m.date).getFullYear() !== new Date().getFullYear() ? m.date.slice(0, 4) + '.' : ''}${md(m.date)} ${esc(m.merchant || '거래처 없음')} <span class="nw">${won(m.amount)}원</span></span>` : '';
   const editing = imp.editing === i, blocked = impBlocked(it), name = esc(it.merchant || '거래처 없음');
-  return `<div class="import-row${it.on ? ' on' : ''}${it.dup ? ' is-dup' : ''}${editing ? ' is-editing' : ''}${blocked ? ' is-blocked' : ''}" data-i="${i}">
+  const off = Math.floor(i / IMP_PER) !== imp.page; // 확인 목록 3건/쪽(Astra P2-01): 다른 쪽 행은 숨김(고른 상태·수정은 그대로)
+  return `<div class="import-row${it.on ? ' on' : ''}${it.dup ? ' is-dup' : ''}${editing ? ' is-editing' : ''}${blocked ? ' is-blocked' : ''}${off ? ' pg-off' : ''}" data-i="${i}">
     <label class="imp-sel" for="impchk-${i}"><input type="checkbox" id="impchk-${i}" data-act="impchk" data-v="${i}" ${it.on ? 'checked' : ''} ${blocked ? `disabled aria-describedby="impwhy-${i}"` : ''} aria-label="${name} ${it.amount ? won(it.amount) + '원' : '금액 없음'} 기록하기"></label>
     <div class="imp-body">
       <label class="imp-top" for="impchk-${i}"><span class="imp-m">${name}</span><span class="imp-a num${it.type === 'refund' ? ' ref' : it.type === 'transfer' ? ' ex' : ''}">${it.type === 'refund' ? '환불 +' : ''}${it.amount ? wonWbr(it.amount) : '금액 없음'}</span></label>
-      <span class="imp-meta">${impDate(it)}${it.time ? ' ' + it.time : ''}</span>
       ${impTags(it) ? `<span class="imp-tags">${impTags(it)}</span>` : ''}${match}
-      <span class="imp-act"><span class="imp-last"><span class="imp-meta">${esc(it.category || '미분류')}${it.sug ? ' <span class="muted">(추천)</span>' : ''} · ${it.payer ? esc(it.payer) + ' 결제' : '결제자 미정'}</span>${blocked ? `<span class="imp-edit-hint" id="impwhy-${i}">${impWhy(it)}</span>` : ''}</span><button type="button" class="imp-edit-btn" data-act="impedit" data-v="${i}" aria-expanded="${editing}" aria-label="${name} ${editing ? '수정 닫기' : '수정'}">${editing ? '닫기' : '수정'}</button></span>
+      <span class="imp-act"><span class="imp-last"><span class="imp-meta">${impDate(it)}${it.time ? ' ' + it.time : ''} · ${esc(it.category || '미분류')}${it.sug ? ' <span class="muted">(추천)</span>' : ''} · ${it.payer ? esc(it.payer) + ' 결제' : '결제자 미정'}</span>${blocked ? `<span class="imp-edit-hint" id="impwhy-${i}">${impWhy(it)}</span>` : ''}</span><button type="button" class="imp-edit-btn" data-act="impedit" data-v="${i}" aria-expanded="${editing}" aria-label="${name} ${editing ? '수정 닫기' : '수정'}">${editing ? '닫기' : '수정'}</button></span>
     </div></div>${editing ? impEditor(it, i) : ''}`;
 }
 function impEditor(it, i) {
@@ -2064,18 +2150,21 @@ function impFooter() {
 }
 function reviewHtml() {
   const c = impCount(), file = imp.kind === 'file', st = store.status();
+  const pg = core.pageOf(imp.items.length, imp.page || 0, IMP_PER); imp.page = pg.page;
+  if (imp.editing >= 0) imp.page = Math.floor(imp.editing / IMP_PER);
+  imp.shown = Math.max(imp.shown, (imp.page + 1) * IMP_PER);
   const rows = imp.items.slice(0, imp.shown).map(impRow).join('');
-  const more = imp.items.length - imp.shown;
+  const more = 0;
   const when = st.lastSync ? new Date(st.lastSync).toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' }) : '';
   return `<div class="sheet-wrap">${impHead(file ? '빠진 기록 가져오기' : '알림 붙여넣기', true)}
     <div class="sheet-b">
       ${imp.resumed ? `<p class="resume-line">아까 확인하던 목록이에요. <button type="button" class="link" data-act="impfresh">새로 시작</button></p>` : ''}
       <div class="import-summary" role="status"><span><b class="num">${c.fresh}</b> ${file ? '빠진 기록' : '새 기록'}</span><span><b class="num">${c.dup}</b> 이미 있음</span><span${c.check ? ' class="warn"' : ''}><b class="num">${c.check}</b> 확인 필요</span></div>
-      <p class="hint basis">이 기기에 있는 기록과 비교했어요${when ? ` · 마지막 공유 ${when}` : ''}${navigator.onLine === false ? ' · 오프라인이라 다른 기기의 새 기록은 빠져 있을 수 있어요' : ''}</p>
+      ${navigator.onLine === false || !st.lastSync || Date.now() - st.lastSync > 10 * 60e3 ? `<p class="hint basis">이 기기에 있는 기록과 비교했어요${when ? ` · 마지막 공유 ${when}` : ''}${navigator.onLine === false ? ' · 오프라인이라 다른 기기의 새 기록은 빠져 있을 수 있어요' : ''}</p>` : ''}
       <div class="imp-tools"><button type="button" class="link" data-act="impsel" data-v="new">추가할 것만 선택</button><button type="button" class="link" data-act="impsel" data-v="none">모두 선택 해제</button>
         <label class="imp-bulk">결제자 모두 <select class="in" data-input="impbulk" aria-label="모든 건의 결제자 한꺼번에 바꾸기"><option value="">그대로</option>${payerList().map(p => `<option>${esc(p)}</option>`).join('')}</select></label></div>
       ${imp.items.length ? `<div class="card import-list">${rows}</div>` : '<div class="card"><div class="empty">가져올 내역이 없어요.</div></div>'}
-      ${more > 0 ? `<button type="button" class="btn ghost" data-act="impmore">${more}건 더 보기</button>` : ''}
+      ${pager('imppage', core.pageOf(imp.items.length, imp.page, IMP_PER), '건')}
       ${imp.unread.length ? `<details class="source-detail unread"><summary>가져오지 못한 내용 ${imp.unread.length}개</summary>${imp.unread.slice(0, 200).map(u => `<div class="unread-row"><b>${u.line ? u.line + '번째 줄 · ' : ''}${esc(u.why)}</b><pre>${esc(u.raw)}</pre></div>`).join('')}
         ${imp.unread.length > 200 ? `<p class="hint">외 ${imp.unread.length - 200}개는 파일에서 직접 확인해 주세요.</p>` : ''}
         <p class="hint">필요하면 기록 화면에서 직접 입력해 주세요.</p></details>` : ''}
@@ -2163,11 +2252,18 @@ let lf = LF0(), lfDraft = null, lfOpenSum = false;
 const KINDS = [['all', '전체'], ['expense', '지출'], ['refund', '환불'], ['refund_pending', '환불 대기'], ['transfer', '지출 제외']];
 const lfActive = f => f.cats.length + f.payers.length + (f.methods || []).length + (f.min || f.max ? 1 : 0) + (f.kind !== 'all' ? 1 : 0) + (f.period !== 'cycle' ? 1 : 0) + (f.q.trim() ? 1 : 0);
 const amtLabel = f => f.min && f.max ? `${man(f.min)}~${man(f.max)}` : f.min ? `${man(f.min)} 이상` : f.max ? `${man(f.max)} 이하` : '';
+// 필터 시트(v25 2차, Astra P1-10): 기간 / 분류 / 결제 / 기타 탭으로 한 묶음씩. 조건 요약·결과 N건·적용은 늘 보임, 닫으면 기존 조건 그대로
+let lfTab = 'period';
+const LF_TAB_OF = { period: 'period', cats: 'cats', payers: 'pay', methods: 'pay', amount: 'etc', kind: 'etc' };
 function openListFilter(section) {
   lfDraft = JSON.parse(JSON.stringify(lf));
   lfDraft.offset = curOff();
+  lfTab = LF_TAB_OF[section] || 'period';
   showSheet(lfSheetHtml(), true);
-  const el = section && $('#lf-' + section); if (el) el.scrollIntoView({ block: 'start' });
+}
+function lfSummary(f) {
+  const parts = [f.period === 'all' ? '전체 기간' : f.period === 'custom' ? '직접 지정' : '', f.cats.length ? '세부 분류 ' + f.cats.length : '', f.payers.length ? '결제자 ' + f.payers.length : '', (f.methods || []).length ? '결제수단 ' + f.methods.length : '', f.min || f.max ? '금액' : '', f.kind !== 'all' ? KINDS.find(k => k[0] === f.kind)[1] : ''].filter(Boolean);
+  return parts.length ? '조건: ' + parts.join(' · ') : '추가 조건 없음';
 }
 const methodList = f => [...new Set([...S.settings.methods, ...liveTxs().map(t => t.method || '미지정'), ...(f.methods || [])])];
 function lfSheetHtml() {
@@ -2182,7 +2278,8 @@ function lfSheetHtml() {
   const t = r ? periodTitle(r) : null;
   return `<div class="sheet-wrap">
     ${sheetHead('내역 필터')}
-    <div class="sheet-b lf-body"><p class="hint">${month ? '월별' : '카드 청구(' + esc(cardLabel()) + ')'} · 대분류 ${esc(mjLabel(curMajor()))} 안에서 더 좁혀요.</p>
+    <div class="sheet-b lf-body lft-${lfTab}"><p class="hint lf-sum" id="lf-sum">${month ? '월별' : '카드 청구(' + esc(cardLabel()) + ')'} · 대분류 ${esc(mjLabel(curMajor()))} · ${esc(lfSummary(f))}</p>
+      ${tabsU('lftab', [['period', '기간'], ['cats', '분류'], ['pay', '결제'], ['etc', '기타']], lfTab, '조건 종류', 'lftabs')}
       <section class="filter-section" id="lf-period"><h3>기간</h3>
         <div class="seg">${[['cycle', month ? '보던 달' : '보던 청구'], ['all', '전체 기간'], ['custom', '직접 지정']].map(([k, l]) => `<button type="button" data-act="lfperiod" data-v="${k}" aria-pressed="${f.period === k}">${l}</button>`).join('')}</div>
         ${f.period === 'cycle' ? `<div class="cyc lf-cyc"><button type="button" data-act="lfcyc" data-v="-1" aria-label="이전 ${month ? '달' : '청구'}">${icon('left')}</button><div class="lbl"><b>${esc(t.title)}</b>${esc(t.sub)}</div><button type="button" data-act="lfcyc" data-v="1" aria-label="다음 ${month ? '달' : '청구'}" ${f.offset >= 0 ? 'disabled' : ''}>${icon('right')}</button></div>` : ''}
@@ -2263,9 +2360,10 @@ document.addEventListener('click', e => {
     case 'bmon': bud.ym = core.addMonths(bud.ym, Number(v)); bud.page = 0; openBudget(); break;
     case 'bcatpage': bud.page += Number(v); openBudget(); break;
     case 'bedit': openBudgetEdit(v); break;
-    case 'blegacy': showSheet(budgetLegacyHtml(budgetState(), true)); break;
+    case 'blegacy': showSheet(budgetLegacyHtml(budgetState(), true), true); break;
     case 'blegacykeep': if (store.setPrefs({ budget_basis: 'legacy' })) { openBudget(); savedToast('기존 주기 예산을 그대로 써요'); } break;
     case 'bmonthstart': startMonthBudget(); break;
+    case 'bcleanup': { const ks = oldMonthKeys(); if (!ks.length || !confirm(`24개월 지난 월 예산 ${ks.length}개를 지울까요? 지난 달 예산 표시가 기본값으로 바뀔 수 있어요.`)) break; if (store.setPrefs(Object.fromEntries(ks.map(k => [k, null])))) { openBudget(); savedToast(`오래된 월 예산 ${ks.length}개를 정리했어요`); } break; }
     case 'blegacyedit': openLegacyBudgetForm(); break;
     /* 대분류 연결 */
     case 'mapping': mapPage = 0; openMapping(); break;
@@ -2275,13 +2373,19 @@ document.addEventListener('click', e => {
     case 'mappick': if (mapSel) { mapSel.id = v; setPressed(b.parentElement, v); } break;
     case 'mapsave': saveMapItem(false); break;
     case 'mapclear': saveMapItem(true); break;
+    case 'cfsave': saveConflict(false); break;
+    case 'cfkeep': saveConflict(true); break;
+    case 'cfopen': openConflict(v); break;
     /* 공유 상태 */
-    case 'statusrow': { const n = store.pendingDetail().total, st = store.status(); if ((n || st.error) && navigator.onLine !== false) { sync(); toast(`공유 대기 ${n}건을 지금 다시 보내요`); } else openSyncSheet(); break; }
+    case 'statusrow': { if (store.pendingDetail().conflicts && !store.pendingDetail().total) { openConflict(Object.keys(store.conflicts())[0]); break; } const n = store.pendingDetail().total, st = store.status(); if ((n || st.error) && navigator.onLine !== false) { sync(); toast(`공유 대기 ${n}건을 지금 다시 보내요`); } else openSyncSheet(); break; }
     case 'syncsheet': openSyncSheet(); break;
     case 'syncnow': sync(); setTimeout(() => { if ($('#sheet [data-ui-key=sync-box]')) openSyncSheet(); }, 50); break;
     /* 설정 */
     case 'stab': setTab = v; render(); break;
-    case 'theme': store.setLocal('theme', v === 'system' ? null : v); applyTheme(S.theme); render(); break;
+    case 'theme': store.setLocal('theme', v === 'system' ? null : v); applyTheme(S.theme); render(); if ($('#sheet .kp-toggle')) setPressed(b.parentElement, v); break;
+    case 'appsheet': openAppSheet(); break;
+    case 'displaysheet': openDisplaySheet(); break;
+    case 'kptoggle': store.setLocal('keypad', b.checked ? true : null); render(); break;
     case 'themetoggle': store.setLocal('theme', isDark() ? 'light' : 'dark'); applyTheme(S.theme); render(); break;
     case 'setcycle': openCycleSheet(); break;
     case 'setlists': openListsSheet(); break;
@@ -2306,6 +2410,7 @@ document.addEventListener('click', e => {
     case 'lfkind': lfDraft.kind = v; repaintLf(); break;
     case 'lfreset': lfDraft = Object.assign(LF0(), { offset: curOff() }); repaintLf(); break;
     case 'lfapply': applyListFilter(); break;
+    case 'lftab': lfTab = v; repaintLf(); break;
     case 'listmenu': listMenu(); break;
     /* 가져오기 */
     case 'impopen': openImport(v); break;
@@ -2314,14 +2419,14 @@ document.addEventListener('click', e => {
     case 'impfresh': { const k = imp.kind; imp = null; impPrev = null; openImport(k); break; }
     case 'impenc': { const f = imp.file; f.enc = f.enc === 'euc-kr' ? '' : 'euc-kr'; f.sheets = [{ name: f.name, rows: core.parseCsv(core.decodeText(f.u8, f.enc || undefined)) }]; f.si = 0; setupMapping(); renderImport(); break; }
     case 'impneg': imp.file.negative = v; renderImport(); break;
-    case 'impgoneg': { const nf = $('#neg-field'); if (nf) { nf.scrollIntoView({ block: 'center' }); const first = nf.querySelector('[data-act=impneg]'); if (first) first.focus({ preventScroll: true }); } break; }
+    case 'impgoneg': { imp.mapTab = 'cols'; renderImport(); const nf = $('#neg-field'); if (nf) { nf.scrollIntoView({ block: 'center' }); const first = nf.querySelector('[data-act=impneg]'); if (first) first.focus({ preventScroll: true }); } break; }
     case 'impfind': {
       const f = imp.file;
       if (f.mapping.date < 0 || f.mapping.amount < 0) { imp.err = '날짜와 금액 열을 골라 주세요'; renderImport(); break; }
       if (imp.items.some(it => it.edited) && !confirm('확인 목록에서 고친 내용이 사라져요. 다시 찾을까요?')) break;
       const conv = core.rowsToCandidates(f.data, f.mapping, convOpts(f));
       if (conv.negatives && !f.negative) { imp.err = '음수 금액을 어떻게 가져올지 골라 주세요'; renderImport(); break; }
-      imp.items = prepareItems(conv.items, false); imp.unread = conv.unread; imp.step = 'review'; imp.shown = IMP_PAGE; imp.editing = -1; imp.err = '';
+      imp.items = prepareItems(conv.items, false); imp.unread = conv.unread; imp.step = 'review'; imp.shown = IMP_PAGE; imp.page = 0; imp.editing = -1; imp.err = '';
       renderImport(); $('#sheet .sheet-b').scrollTop = 0; break;
     }
     case 'impchk': {
@@ -2335,6 +2440,8 @@ document.addEventListener('click', e => {
     case 'impapply': if (commitEdit()) renderImport(); break;
     case 'ietype': setPressed(b.parentElement, v); break;
     case 'impmore': if (!commitEdit()) break; imp.shown += IMP_PAGE; renderImport(); break;
+    case 'imppage': if (!commitEdit()) break; imp.page = (imp.page || 0) + Number(v); renderImport(); { const b2 = $('#sheet .sheet-b'); if (b2) b2.scrollTop = 0; } break;
+    case 'mapview': imp.mapTab = v; renderImport(); break;
     case 'impsave': impSave(); break;
     /* 즐겨찾기 */
     case 'favadd': addFavorite(); break;
@@ -2350,8 +2457,13 @@ document.addEventListener('click', e => {
     case 'key': keyIn(v); break;
     case 'datepick': { const di = $('#date'); if (di && di.showPicker) { try { di.showPicker(); } catch (er) { di.focus(); } } break; }
     case 'kpshow': { const f = $('[data-form=entry]'); if (f) f.classList.remove('kp-off'); const a = $('#amount'); if (a && document.activeElement !== a && !e.target.closest('label')) a.focus({ preventScroll: true }); break; }
-    case 'cat': { if (entryMajor() === v && draft.category !== v) break; draft.category = draft.category === v ? '' : v; draft.catSug = false; refreshCats(); refreshFavButton(); refreshSummary(); break; }
-    case 'dcat': draft.category = draft.category === v ? '' : v; draft.catSug = false; refreshCats(); refreshFavButton(); refreshSummary(); break;
+    case 'cat': { // 대분류: 새 서버는 major 칸(세부 분류와 따로), 옛 서버는 분류 칸에 대분류 이름(v25 1차 방식)
+      const id = core.MAJOR_IDS[MAJOR_NAMES.indexOf(v)];
+      if (hasMajorCol()) draft.major = draft.major === id ? '' : id;
+      else { if (entryMajor() === v && draft.category !== v) break; draft.category = draft.category === v ? '' : v; }
+      draft.catSug = false; refreshCats(); refreshFavButton(); refreshSummary(); break; }
+    case 'ucat': draft.category = draft.category === v ? '' : v; draft.catSug = false; setPressed($('#cats'), draft.category); refreshFavButton(); refreshSummary(); break; // 옛 서버: v24처럼 분류 하나
+    case 'dcat': draft.category = draft.category === v ? '' : v; if (!hasMajorCol() && draft.category) draft.major = ''; draft.catSug = false; refreshCats(); refreshFavButton(); refreshSummary(); break;
     case 'estage': { entryStage = v; const f = $('[data-form=entry]'); if (f) { f.classList.toggle('stage-more', v === 'more'); f.classList.toggle('stage-basic', v !== 'more'); setPressed(b.parentElement, v); const bd = $('#sheet .sheet-b'); if (bd) bd.scrollTop = 0; } break; }
     case 'type': draft.type = v; setPressed(b.parentElement, v); refreshSummary(); refreshFavButton(); break;
     case 'delete':
@@ -2361,7 +2473,9 @@ document.addEventListener('click', e => {
     case 'update': if (verFailed || verSlow || !verLatest) { verCheckedAt = 0; checkUpdate(true); } else applyUpdate(); break;
     case 'rule': openRule(v); break;
     case 'rtab': recurTab = v; recurPage = 0; render(); break;
-    case 'recmon': rmoff = Math.max(-24, Math.min(12, rmoff + Number(v))); recurPage = 0; render(); break;
+    case 'recmon': rmoff = Math.max(-24, Math.min(12, rmoff + Number(v))); recurPage = 0; if (rmoff < 0 && recurTab === 'up') recurTab = 'done'; else if (rmoff >= 0 && recurTab === 'done' && Number(v) > 0) recurTab = 'up'; render(); break;
+    case 'rulemanage': ruleMgrPage = 0; openRuleManage(); break;
+    case 'rmpage': ruleMgrPage += Number(v); openRuleManage(); break;
     case 'recpage': recurPage += Number(v); render(); break;
     case 'lmode': view.list = v; saveView(); listPage = 0; payerPage = 0; render(); break;
     case 'calday': if (calEatClick && Date.now() - calEatClick < 400) { calEatClick = 0; break; } calEatClick = 0; calDay = v; calPicked[curPeriod().start] = v; render(); break;
@@ -2446,6 +2560,9 @@ document.addEventListener('submit', e => {
     if (draft.amountErr) { $('#entry-err').textContent = WON_ERR[draft.amountErr]; $('#amount').setAttribute('aria-invalid', 'true'); $('#amount').focus(); return; }
     if (draft.date > today()) { $('#entry-err').textContent = '미래 날짜는 기록할 수 없어요'; return; }
     const rec = Object.assign({}, draft); delete rec.amountText; delete rec.amountErr; delete rec.catSug;
+    // 대분류: 옛 서버에는 보내지 않는다(받아 줄 열이 없어 조용히 사라지므로). 새 서버에서 지운 대분류는 '-'(빈 값은 서버가 기존 값을 유지)
+    if (!hasMajorCol()) { if (!(editing && store.get(rec.id) && store.get(rec.id).major)) delete rec.major; }
+    else if (!rec.major && editing && store.get(rec.id) && core.MAJOR_IDS.includes(store.get(rec.id).major)) rec.major = '-';
     if (upsert(rec)) { saved = true; store.setLocal('draft', null); $('#sheet').close(); render(); savedEntryToast(rec, editing); }
     else { const fe = $('#entry-foot-err'); if (fe) fe.textContent = '저장하지 못했어요. 기기 저장공간을 확인한 뒤 다시 눌러 주세요'; }
   }
@@ -2455,7 +2572,7 @@ document.addEventListener('submit', e => {
     if (document.activeElement) document.activeElement.blur();
     const r = core.parseNotices(text, { today: today() });
     if (!r.items.length) { imp.err = text.trim() ? '카드 알림을 찾지 못했어요. 금액(원)이 들어 있는 알림인지 확인해 주세요' : '붙여넣은 내용이 없어요'; renderImport(); return; }
-    imp.err = ''; imp.resumed = false; imp.items = prepareItems(r.items, true); imp.unread = r.unread; imp.step = 'review'; imp.editing = -1; imp.shown = IMP_PAGE;
+    imp.err = ''; imp.resumed = false; imp.items = prepareItems(r.items, true); imp.unread = r.unread; imp.step = 'review'; imp.editing = -1; imp.shown = IMP_PAGE; imp.page = 0;
     renderImport(); $('#sheet .sheet-b').scrollTop = 0; return;
   }
   if (kind === 'budget') { saveBudget(f); return; }

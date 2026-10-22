@@ -518,7 +518,7 @@
     return txs.filter(t => {
       if (range && (t.date < range.start || t.date > range.end)) return false;
       if (f.cats && f.cats.length && !f.cats.includes(t.category || '미분류')) return false;
-      if (f.payers && f.payers.length && !f.payers.includes(t.payer || '공동')) return false;
+      if (f.payers && f.payers.length && !f.payers.includes(t.payer || '미지정')) return false; // v25 2차: 결제자 없는 기록은 '공동'과 따로 '미지정'(Astra P1-08)
       if (f.methods && f.methods.length && !f.methods.includes(t.method || '미지정')) return false; // v23: 결제수단(카드별 명세서와 맞춰 보기)
       if (min && t.amount < min) return false;
       if (max && t.amount > max) return false;
@@ -642,11 +642,13 @@
     const inR = (t, r) => !t.deleted && t.date >= r.start && t.date <= r.end;
     const a = txs.filter(t => inR(t, cmp.cur)), b = cmp.future ? [] : txs.filter(t => inR(t, cmp.prev));
     const cur = a.reduce((s, t) => s + signed(t), 0), prev = b.reduce((s, t) => s + signed(t), 0);
-    return { cur, prev, diff: cur - prev, curCount: a.length, prevCount: b.length, hasPrev: b.length > 0, pct: prev > 0 ? Math.round((cur - prev) / prev * 100) : null };
+    // 지난 범위에 지출 제외(이체·카드대금)만 있으면 비교할 근거가 없다(Fable v25 P2-6)
+    const hasPrev = b.some(t => t.type !== 'transfer');
+    return { cur, prev, diff: cur - prev, curCount: a.length, prevCount: b.length, hasPrev, pct: hasPrev && prev > 0 ? Math.round((cur - prev) / prev * 100) : null };
   }
 
   /* 대분류 8개(spec 7절). 거래의 category 칸(시트 '분류' 열)은 그대로 두고, 대분류는 읽을 때 정한다(서버·시트 변경 없음).
-   * 우선순위: 건별 명시(분류 이름이 대분류 이름) → 사용자가 확정한 세부 분류 연결(prefs.cat_map) → 기본 분류 표 → 기타+확인 필요.
+   * 우선순위: 건별 대분류(거래의 major 칸, v25 2차 서버 열) → 분류 이름이 대분류 이름 → 사용자가 확정한 세부 분류 연결(prefs.cat_map) → 기본 분류 표 → 기타+확인 필요.
    * 광범위 글자 추정으로 확정하지 않는다: MAJOR_HINT는 연결 화면의 '제안'에만 쓴다 */
   const MAJORS = [['food', '식비'], ['living', '생활'], ['transport', '교통'], ['shopping', '쇼핑'], ['fixed', '고정지출'], ['medical', '의료'], ['leisure_social', '여가·경조'], ['other', '기타']].map(([id, label]) => ({ id, label }));
   const MAJOR_IDS = MAJORS.map(m => m.id);
@@ -657,6 +659,7 @@
   // 연결 값: '대분류 id' 또는 { m: id, since: ms }(since 뒤에 만든 기록만 = '새 기록만')
   function mapTarget(v) { const id = typeof v === 'string' ? v : v && typeof v === 'object' ? v.m : ''; return MAJOR_IDS.includes(id) ? { id, since: v && typeof v === 'object' ? Number(v.since) || 0 : 0 } : null; }
   function majorOf(t, map) {
+    if (t && MAJOR_IDS.includes(t.major)) return { id: t.major, review: false, source: 'tx' }; // v25 2차: 건별 대분류(시트 major 열)가 가장 먼저
     const c = String(t && t.category || '').trim();
     if (!c || c === '미분류') return { id: 'other', review: true, source: 'none', hint: '' };
     if (MAJOR_BY_LABEL[c]) return { id: MAJOR_BY_LABEL[c], review: false, source: 'major' };
@@ -719,7 +722,9 @@
   function budgetApply(prefs, ym, field, value, scope, meta) {
     prefs = prefs || {}; meta = meta || {};
     if (!validYm(ym) || !(field === 'total' || MAJOR_IDS.includes(field))) return { ok: false, patch: {}, error: 'field' };
-    const v = validWon(Number(value)) ? Number(value) : 0;
+    // 0 = 미설정. 그 밖에 정수 원 1~9,999,999,999가 아니면(1e12·문자·소수) 저장하지 않는다(Fable v25 P2-7)
+    if (!(value === 0 || validWon(value))) return { ok: false, patch: {}, error: 'value' };
+    const v = value;
     const change = b => { const n = { total: b.total, cats: Object.assign({}, b.cats) }; if (field === 'total') n.total = v; else if (v) n.cats[field] = v; else delete n.cats[field]; return n; };
     const stamp = (n, old) => Object.assign(n, { rev: (Number(old && old.rev) || 0) + 1, by: String(meta.by || ''), at: Number(meta.at) || 0 });
     const patch = {}, cur = budgetFor(prefs, ym), next = change(cur), check = budgetCheck(next);

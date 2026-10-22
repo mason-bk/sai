@@ -24,7 +24,9 @@
  *   저장 보호 store.persistStorage() → navigator.storage.persist() 요청, 결과는 기기 상태 persist { state, at }(v25)
  *   연결      store.connected(), store.parseCode(text), store.validUrl(url), store.connect(cfg), store.disconnect()
  *   인증      store.auth  (v21 구글 로그인에서 채움)
- *   알림      store.on('change' | 'status' | 'notice', fn)
+ *   알림      store.on('change' | 'status' | 'notice' | 'conflict', fn)
+ *   충돌      store.conflicts() → { 키: { mine, theirs, base, fields } }, store.resolveConflict(key, value | undefined) (v25 2차: 월 예산 수정 번호 비교)
+ *   서버 기능 store.features() → ['major', 'prefsRev'] (옛 서버면 빈 배열: 거래별 대분류 열·예산 충돌 검사 없음)
  * ===================================================================== */
 
 const STORE_KEY = 'sai.v1';
@@ -34,12 +36,36 @@ const DEFAULT_SETTINGS = {
   methods: ['카드', '현금', '계좌이체'],
   beneficiaries: ['공동', '아내', '남편'],
 };
-const PREFS_LIMIT = 19000; // 서버 cleanPrefs_는 JSON 2만 자를 넘으면 prefs 전체를 비운다 → 여유를 두고 막는다
+const PREFS_LIMIT = 19000;
+// 수정 번호(rev)로 충돌을 가리는 공유 값: 월 예산 'bm:YYYY-MM'·'bt:YYYY-MM'(v25 2차)
+const REV_KEY = /^b[mt]:\d{4}-\d{2}$/;
+const revOf = v => (v && typeof v === 'object' && Number(v.rev)) || 0;
+/* 3방향 합치기: 기준(내가 고치기 전) · 내 값 · 상대(지금 서버) 값을 항목별로 비교. 한 단계 아래 객체(cats)는 항목별로 본다.
+ * 내가 안 바꾼 항목은 상대 값, 상대가 안 바꾼 항목은 내 값, 둘 다 같은 값으로 바꿨으면 그 값, 서로 다르게 바꿨으면 충돌(fields에 '경로') */
+function merge3(base, mine, theirs) {
+  const skip = { rev: 1, by: 1, at: 1 }, J = v => JSON.stringify(v === undefined ? null : v), conflicts = [];
+  const obj = v => v && typeof v === 'object' && !Array.isArray(v);
+  function walk(b, m, t, path) {
+    const out = {}, keys = [...new Set([...Object.keys(obj(b) ? b : {}), ...Object.keys(obj(m) ? m : {}), ...Object.keys(obj(t) ? t : {})])];
+    keys.forEach(k => {
+      if (!path && skip[k]) return;
+      const bv = obj(b) ? b[k] : undefined, mv = obj(m) ? m[k] : undefined, tv = obj(t) ? t[k] : undefined;
+      if (!path && (obj(mv) || obj(tv) || obj(bv))) { out[k] = walk(bv, mv, tv, k); return; }
+      let v;
+      if (J(mv) === J(bv)) v = tv; else if (J(tv) === J(bv) || J(tv) === J(mv)) v = mv; else { conflicts.push(path ? path + '.' + k : k); v = tv; }
+      if (v !== undefined) out[k] = v;
+    });
+    return out;
+  }
+  const value = walk(base, mine, theirs, '');
+  if (obj(mine)) ['by', 'at'].forEach(k => { if (k in mine) value[k] = mine[k]; });
+  return { value, conflicts };
+} // 서버 cleanPrefs_는 JSON 2만 자를 넘으면 prefs 전체를 비운다 → 여유를 두고 막는다
 
 let S = loadState();
 
 const store = (() => {
-  const listeners = { change: [], status: [], notice: [] };
+  const listeners = { change: [], status: [], notice: [], conflict: [] };
   const emit = (ev, arg) => listeners[ev].forEach(fn => { try { fn(arg); } catch (e) { console.error(e); } });
   const synced = new Set();
   let syncing = false, syncAgain = false, syncError = '';
@@ -109,16 +135,43 @@ const store = (() => {
         // 보낼 내용과 '보낸 뒤 바뀌었는지' 비교 기준을 기다리기 전에 함께 고정한다
         const sent = JSON.stringify(S.pendingSettings), dirty = (S.prefsDirty || []).slice();
         const out = JSON.parse(sent);
+        const prefsBase = {}, found = {}, mine = {};
         if (out.prefs && dirty.length) {
           // 보내기 직전 서버의 최신 prefs를 받아 그 위에 얹는다(기록은 건드리지 않는 빈 동기화)
           const pre = await api({ action: 'sync', since: Number.MAX_SAFE_INTEGER, ops: [] });
+          if (pre.features) S.features = pre.features;
           S.serverPrefs = (pre.settings && pre.settings.prefs) || {};
           const base = Object.assign({}, S.serverPrefs);
-          dirty.forEach(k => { if (k in out.prefs) base[k] = out.prefs[k]; else delete base[k]; });
+          dirty.forEach(k => {
+            const mv = k in out.prefs ? out.prefs[k] : null;
+            // v25 2차: 수정 번호를 가진 공유 값(월 예산)은 내가 고치기 전 값(기준)과 지금 서버 값을 비교해 3방향으로 합친다
+            const b0 = REV_KEY.test(k) && S.prefsBase && S.prefsBase[k];
+            if (b0) {
+              const sv = k in S.serverPrefs ? S.serverPrefs[k] : null, bv = b0.value;
+              mine[k] = mv;
+              if (revOf(sv) !== revOf(bv)) {
+                const m = merge3(bv, mv, sv);
+                if (m.conflicts.length) { found[k] = { key: k, mine: mv, theirs: sv, base: bv, fields: m.conflicts }; return; } // 서버 값 그대로 두고 내 값은 충돌 기록에
+                base[k] = mv == null ? null : Object.assign(m.value, { rev: revOf(sv) + 1 }); // 다른 항목만 고쳤으면 자동으로 합침
+                if (base[k] == null) delete base[k];
+              } else if (mv == null) delete base[k]; else base[k] = mv;
+              prefsBase[k] = revOf(sv);
+              return;
+            }
+            if (k in out.prefs) base[k] = out.prefs[k]; else delete base[k];
+          });
           out.prefs = base;
+          // 합친 결과가 서버 한도(2만 자)를 넘으면 서버가 prefs 전체를 비운다 → 보내지 않고 이유를 알린다(Fable v25 P2-2)
+          const size = JSON.stringify(out.prefs).length;
+          if (size > PREFS_LIMIT) { const e = new Error('공유 설정이 ' + size.toLocaleString('en-US') + '자로 한도(' + PREFS_LIMIT.toLocaleString('en-US') + '자)를 넘어 보내지 않았어요. 예산 → 오래된 월 예산 정리 또는 즐겨찾기를 줄여 주세요'); e.code = 'prefs_too_big'; throw e; }
         }
-        const r = await api({ action: 'settings', settings: out });
-        if (JSON.stringify(S.pendingSettings) === sent) { S.settings = normSettings(r.settings); S.pendingSettings = null; S.prefsDirty = null; S.serverPrefs = r.settings.prefs || null; }
+        const r = await api(Object.keys(prefsBase).length ? { action: 'settings', settings: out, prefsBase } : { action: 'settings', settings: out });
+        if (r.features) S.features = r.features;
+        (r.conflicts || []).forEach(c => { found[c.key] = { key: c.key, mine: mine[c.key], theirs: c.server, base: S.prefsBase && S.prefsBase[c.key] ? S.prefsBase[c.key].value : null, fields: merge3(S.prefsBase && S.prefsBase[c.key] ? S.prefsBase[c.key].value : null, mine[c.key], c.server).conflicts }; });
+        // 보낸 값이 서버에 저장됐으니 그 키의 기준은 이제 서버 값(보내는 사이 다시 고쳐 대기열이 남아도 내 이전 저장을 상대 수정으로 오인하지 않게)
+        if (S.prefsBase) Object.keys(S.prefsBase).forEach(k => { if (k in prefsBase || dirty.includes(k)) { if (found[k]) return; const sp = (r.settings && r.settings.prefs) || {}; S.prefsBase[k] = { value: k in sp ? sp[k] : null }; } });
+        if (JSON.stringify(S.pendingSettings) === sent) { S.settings = normSettings(r.settings); S.pendingSettings = null; S.prefsDirty = null; S.prefsBase = null; S.serverPrefs = r.settings.prefs || null; }
+        if (Object.keys(found).length) { S.prefsConflicts = Object.assign({}, S.prefsConflicts, found); emit('conflict', Object.keys(found)); }
         save();
       }
       const ops = Object.values(S.outbox);
@@ -140,7 +193,7 @@ const store = (() => {
         const cur = S.txs[r.id];
         if (!cur || r.updated_at >= cur.updated_at) S.txs[r.id] = r;
       });
-      S.since = res.now; S.lastSync = Date.now();
+      S.since = res.now; S.lastSync = Date.now(); S.features = Array.isArray(res.features) ? res.features : []; // 옛 서버는 features가 없다
       S.serverPrefs = res.settings && res.settings.prefs || null;
       if (!S.pendingSettings) S.settings = normSettings(res.settings);
       save();
@@ -150,7 +203,8 @@ const store = (() => {
       const why = e.code ? e.code + ' · ' + (e.message || '') : e.name === 'AbortError' ? '30초 응답 없음' : (e.name || '') + ' ' + (e.message || '');
       syncError = e.code === 'unauthorized' ? '설정 코드가 바뀌었어요. 설정 → 설정 코드 바꾸기'
         : navigator.onLine === false ? '' : '공유 실패 (' + why.trim().slice(0, 120) + ') · 기록은 이 기기에 안전해요';
-      if (e.code !== 'unauthorized') scheduleRetry(); else clearRetry(); // 설정 코드가 바뀐 경우는 다시 보내도 같다
+      if (e.code === 'prefs_too_big') syncError = e.message;
+      if (e.code !== 'unauthorized' && e.code !== 'prefs_too_big') scheduleRetry(); else clearRetry(); // 설정 코드가 바뀌었거나 용량 초과는 다시 보내도 같다 // 설정 코드가 바뀐 경우는 다시 보내도 같다
     } finally {
       syncing = false;
       emit('change');
@@ -201,14 +255,16 @@ const store = (() => {
   }
   /* prefs는 서버가 통째로 바꾼다. 두 사람이 다른 항목(예: 예산과 즐겨찾기)을 거의 동시에 고쳐도 서로 지우지 않도록
    * 이 기기에서 바꾼 키만 기억했다가, 보낼 때 마지막으로 받은 서버 prefs 위에 얹는다(같은 키를 동시에 고치면 나중 저장이 남음) */
-  function setPrefs(patch) {
+  function setPrefs(patch, opts) {
     if (!S.settings.prefs) { emit('notice', '서버 업데이트가 필요해요 (Apps Script 새 버전)'); return false; }
     const prefs = Object.assign({}, S.settings.prefs, patch);
     Object.keys(patch).forEach(k => { if (patch[k] === null) delete prefs[k]; }); // null = 그 키를 지움(서버 병합에서도 지워진다)
     if (JSON.stringify(prefs).length > PREFS_LIMIT) { emit('notice', '공유 설정 용량이 가득 찼어요. 즐겨찾기를 조금 지워 주세요'); return false; }
-    const dirtyBefore = S.prefsDirty;
+    const dirtyBefore = S.prefsDirty, baseBefore = S.prefsBase;
     S.prefsDirty = [...new Set([...(S.prefsDirty || []), ...Object.keys(patch)])];
-    if (!saveSettings({ prefs })) { S.prefsDirty = dirtyBefore; return false; }
+    // 수정 번호를 가진 값은 처음 고칠 때의 값(이 기기가 마지막으로 받은 서버 값)을 기준으로 남긴다. 보낼 때 서버 값과 비교
+    Object.keys(patch).forEach(k => { if (REV_KEY.test(k) && !(S.prefsBase && k in S.prefsBase)) S.prefsBase = Object.assign({}, S.prefsBase, { [k]: { value: opts && opts.base && k in opts.base ? opts.base[k] : (k in (S.settings.prefs || {}) ? JSON.parse(JSON.stringify(S.settings.prefs[k])) : null) } }); });
+    if (!saveSettings({ prefs })) { S.prefsDirty = dirtyBefore; S.prefsBase = baseBefore; return false; }
     return true;
   }
 
@@ -233,6 +289,15 @@ const store = (() => {
     S.persist = { state, at: Date.now() }; save(); emit('change');
     return S.persist;
   }
+  /* 충돌 해결(v25 2차): 고른 값을 상대 값 위에 다시 저장(기준 = 상대 값). keep = 상대 값 그대로 두고 내 초안 버림 */
+  function resolveConflict(key, value) {
+    const c = S.prefsConflicts && S.prefsConflicts[key]; if (!c) return false;
+    const rest = Object.assign({}, S.prefsConflicts); delete rest[key];
+    if (value === undefined) { S.prefsConflicts = rest; save(); emit('change'); return true; }
+    const before = S.prefsConflicts; S.prefsConflicts = rest;
+    if (!setPrefs({ [key]: Object.assign({}, value, { rev: revOf(c.theirs) + 1 }) }, { base: { [key]: c.theirs } })) { S.prefsConflicts = before; return false; }
+    return true;
+  }
   function connect(cfg) { S.cfg = cfg; syncError = ''; save(); emit('change'); sync(); }
   function disconnect() {
     if (Object.keys(S.outbox).length || S.pendingSettings) return false;
@@ -242,7 +307,8 @@ const store = (() => {
 
   return {
     list, get: id => S.txs[id], isPending: id => !!S.outbox[id], pendingCount: () => Object.keys(S.outbox).length,
-    pendingDetail: () => { const tx = Object.keys(S.outbox).length, settings = S.pendingSettings ? 1 : 0; return { tx, settings, total: tx + settings }; },
+    pendingDetail: () => { const tx = Object.keys(S.outbox).length, settings = S.pendingSettings ? 1 : 0; return { tx, settings, total: tx + settings, conflicts: Object.keys(S.prefsConflicts || {}).length }; },
+    conflicts: () => S.prefsConflicts || {}, resolveConflict, features: () => S.features || [], merge3,
     upsert: rec => upsertMany([rec]), upsertMany: recs => upsertMany(recs),
     remove: id => !!S.txs[id] && upsertMany([Object.assign({}, S.txs[id], { deleted: true })]),
     settings: () => S.settings, saveSettings, prefs: () => S.settings.prefs || null, setPrefs,
